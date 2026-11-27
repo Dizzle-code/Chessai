@@ -109,6 +109,29 @@ object PieceStore {
     fun clear(ctx: Context) { file(ctx).delete() }
 }
 
+/**
+ * Saves what the app captured to the gallery (Pictures/ChessAI) so a failed recognition can be
+ * inspected. Returns true on success (Android 10+ only, no permission needed).
+ */
+fun saveDiagnosticCapture(ctx: Context, img: RgbImage): Boolean {
+    if (android.os.Build.VERSION.SDK_INT < 29) return false
+    return runCatching {
+        val full = Bitmap.createBitmap(img.px, img.width, img.height, Bitmap.Config.ARGB_8888)
+        val w = minOf(720, img.width)
+        val scaled = Bitmap.createScaledBitmap(full, w, (img.height.toLong() * w / img.width).toInt(), true)
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "chessai_${System.currentTimeMillis()}.jpg")
+            put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/ChessAI")
+        }
+        val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)!!
+        ctx.contentResolver.openOutputStream(uri)!!.use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+        if (scaled !== full) scaled.recycle()
+        full.recycle()
+        true
+    }.getOrDefault(false)
+}
+
 /** Crops the board, scales it to size x size and encodes a JPEG for the AI request. */
 fun encodeBoardJpeg(img: RgbImage, r: BoardRect, size: Int): ByteArray {
     val x0 = r.x.coerceIn(0, img.width - 1)

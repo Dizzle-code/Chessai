@@ -67,6 +67,9 @@ object SquareFeatures {
         val cells = ByteArray(n * n)
         var fg = 0
         for (i in 0 until n * n) {
+            // Chess apps print coordinates (1-8, a-h) into square corners: ignore the corners.
+            val cx = i % n; val cy = i / n
+            if ((cx < CORNER || cx >= n - CORNER) && (cy < CORNER || cy >= n - CORNER)) continue
             val c = rgb[i]
             val r = (c shr 16) and 255; val g = (c shr 8) and 255; val b = c and 255
             val d = abs(r - bg[0]) + abs(g - bg[1]) + abs(b - bg[2])
@@ -80,6 +83,8 @@ object SquareFeatures {
     }
 
     const val FG_THRESHOLD = 28
+    /** Size (in grid cells) of the corner areas that are ignored because of coordinate labels. */
+    private const val CORNER = 5
 
     /** Distance 0..~100 between two features, tolerant to a 1-cell misalignment. */
     fun distance(a: SquareFeature, b: SquareFeature): Float {

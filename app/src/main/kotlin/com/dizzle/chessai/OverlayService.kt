@@ -507,6 +507,14 @@ class OverlayService : Service() {
         } catch (e: Exception) {
             Analyzer.Result(false, "Fehler: ${e.message ?: e.javaClass.simpleName}")
         }
+        // No board found on a manual tap: keep the capture so the user can send it for diagnosis.
+        val res2 = if (!res.ok && res.rect == null && !auto && saveDiagnosticCapture(this, img)) {
+            res.copy(message = res.message + " (Aufnahme in Galerie › ChessAI gespeichert)")
+        } else res
+        reportResult(res2, img, auto)
+    }
+
+    private fun reportResult(res: Analyzer.Result, img: RgbImage, auto: Boolean) {
         if (res.source == Analyzer.Source.AI) {
             if (auto) lastAutoAi = System.currentTimeMillis()
             prefs.totalTokens = prefs.totalTokens + res.inputTokens + res.outputTokens
