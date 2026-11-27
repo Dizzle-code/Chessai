@@ -24,9 +24,9 @@ object ChatGptLogin {
         val oauth = ChatGptOAuth(prefs.chatGptIssuedClientId.ifBlank { null }, prefs.hostId)
         oauth.discover()
         val server = try {
-            ServerSocket(PREFERRED_PORT, 1, InetAddress.getByName("127.0.0.1"))
+            ServerSocket(PREFERRED_PORT, 16, InetAddress.getByName("127.0.0.1"))
         } catch (e: Exception) {
-            ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+            ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
         }
         server.use { ss ->
             ss.soTimeout = TIMEOUT_MS
@@ -37,7 +37,11 @@ object ChatGptLogin {
                     throw IllegalStateException("Anmeldung abgelaufen – bitte erneut versuchen")
                 }
                 sock.use { s ->
-                    val line = s.getInputStream().bufferedReader().readLine() ?: return@use
+                    // Browsers open idle "preconnect" sockets; don't let them block the real
+                    // callback (the authorization code is short-lived).
+                    s.soTimeout = 2_000
+                    val line = try { s.getInputStream().bufferedReader().readLine() } catch (e: SocketTimeoutException) { null }
+                        ?: return@use
                     val target = line.split(' ').getOrNull(1) ?: return@use
                     if (!target.startsWith("/auth/callback")) {
                         respond(s, 404, "<p>Not found</p>")
@@ -115,8 +119,10 @@ object ChatGptLogin {
         )
     }
 
+    // Note: a literal '+' must stay '+' (URLDecoder would turn it into a space and break the code).
     private fun parseQuery(q: String): Map<String, String> = q.split('&').filter { '=' in it }.associate {
-        URLDecoder.decode(it.substringBefore('='), "UTF-8") to URLDecoder.decode(it.substringAfter('='), "UTF-8")
+        fun dec(v: String) = URLDecoder.decode(v.replace("+", "%2B"), "UTF-8")
+        dec(it.substringBefore('=')) to dec(it.substringAfter('='))
     }
 
     private fun page(title: String, text: String, redirect: Boolean = false): String {

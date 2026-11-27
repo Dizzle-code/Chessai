@@ -246,10 +246,29 @@ class MainActivity : Activity() {
             runOnUiThread {
                 loginRunning = false
                 refreshLogin()
-                result.exceptionOrNull()?.let { Toast.makeText(this, it.message ?: "Login fehlgeschlagen", Toast.LENGTH_LONG).show() }
+                result.exceptionOrNull()?.let { showError("ChatGPT-Login fehlgeschlagen", it.message ?: it.javaClass.simpleName) }
                         ?: Toast.makeText(this, "Mit ChatGPT angemeldet · Modell: ${prefs.openAiModel}", Toast.LENGTH_SHORT).show()
             }
         }.start()
+    }
+
+    private fun showError(title: String, message: String) {
+        val text = TextView(this).apply {
+            this.text = message
+            setTextIsSelectable(true)
+            setPadding(dp(20), dp(12), dp(20), dp(4))
+            textSize = 14f
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(text)
+            .setPositiveButton("Kopieren") { _, _ ->
+                val cm = getSystemService(android.content.ClipboardManager::class.java)
+                cm?.setPrimaryClip(android.content.ClipData.newPlainText("Fehler", message))
+                Toast.makeText(this, "Kopiert", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("OK", null)
+            .show()
     }
 
     private fun logoutChatGpt() {

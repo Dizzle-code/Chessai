@@ -73,7 +73,7 @@ class ChatGptOAuth(
 
     /** Builds the URL to open in the browser. Call [discover] first (network). */
     fun begin(redirectUri: String): Pending {
-        val verifier = randomUrlSafe(64)
+        val verifier = randomUrlSafe(32)
         val challenge = b64url(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)))
         val state = randomUrlSafe(24)
         val nonce = randomUrlSafe(24)
@@ -184,8 +184,12 @@ class ChatGptOAuth(
         val code = c.responseCode
         val body = (if (code in 200..299) c.inputStream else c.errorStream)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: ""
         if (code !in 200..299) {
-            val msg = runCatching { mapper.readTree(body).let { it.path("error_description").asText("").ifEmpty { it.path("error").asText("") } } }.getOrNull()
-            throw IllegalStateException("ChatGPT-Login fehlgeschlagen ($code): ${msg?.ifEmpty { null } ?: body.take(200)}")
+            val n = runCatching { mapper.readTree(body) }.getOrNull()
+            val err = n?.path("error")?.let { if (it.isObject) it.path("code").asText(it.path("message").asText("")) else it.asText("") } ?: ""
+            val desc = n?.path("error_description")?.asText("")?.ifEmpty { null }
+                ?: n?.path("error")?.path("message")?.asText("")?.ifEmpty { null }
+            throw IllegalStateException("ChatGPT-Login fehlgeschlagen ($code): " +
+                listOfNotNull(err.ifEmpty { null }, desc?.takeIf { it != err }).joinToString(" – ").ifEmpty { body.take(300) })
         }
         return mapper.readTree(body)
     }
