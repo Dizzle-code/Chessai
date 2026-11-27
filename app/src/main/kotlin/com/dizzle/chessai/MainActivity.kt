@@ -303,7 +303,11 @@ class MainActivity : Activity() {
         }
         val mpm = getSystemService(MediaProjectionManager::class.java)!!
         @Suppress("DEPRECATION")
-        startActivityForResult(mpm.createScreenCaptureIntent(), REQ_CAPTURE)
+        // Android 14+: only offer "entire screen" – sharing a single app would hide the chess app.
+        val intent = if (Build.VERSION.SDK_INT >= 34) {
+            mpm.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())
+        } else mpm.createScreenCaptureIntent()
+        startActivityForResult(intent, REQ_CAPTURE)
     }
 
     private fun stopOverlay() {

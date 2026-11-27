@@ -108,7 +108,7 @@ class Analyzer(
     @Synchronized
     fun analyze(img: RgbImage, opt: Options): Result {
         val rect = findRect(img, opt.manualRect)
-            ?: return Result(false, "Kein Schachbrett gefunden – im Menü „Brett festlegen“ nutzen")
+            ?: return Result(false, noBoardMessage(img))
         val feats = SquareFeatures.extract(img, rect)
 
         var pos: Position? = null
@@ -214,6 +214,25 @@ class Analyzer(
             engine = er,
             myTurn = true,
         )
+    }
+
+    /** Explains why no board was found: blank/black capture vs. board just not detected. */
+    private fun noBoardMessage(img: RgbImage): String {
+        var min = 255; var max = 0; var sum = 0L; var n = 0
+        val step = maxOf(1, img.px.size / 20_000)
+        var i = 0
+        while (i < img.px.size) {
+            val c = img.px[i]
+            val l = (((c shr 16) and 255) * 3 + ((c shr 8) and 255) * 6 + (c and 255)) / 10
+            if (l < min) min = l; if (l > max) max = l; sum += l; n++
+            i += step
+        }
+        return if (max - min < 12 || sum / n < 8) {
+            "Aufnahme ist leer/schwarz – beim Start „Gesamten Bildschirm“ freigeben (nicht nur eine App). " +
+                "Manche Apps blockieren Bildschirmaufnahmen."
+        } else {
+            "Kein Schachbrett gefunden – Brett ganz sichtbar? Sonst lange auf ♞ drücken → „Brett manuell festlegen“"
+        }
     }
 
     private fun myColor(pref: Int, wb: Boolean) = if (pref != 0) pref else if (wb) 1 else -1
