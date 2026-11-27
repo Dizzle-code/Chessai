@@ -14,7 +14,7 @@ installieren. Android 8.0 oder neuer.
 
 ## So funktioniert's
 
-1. App öffnen → AI-Anbieter wählen (optional) → **Overlay starten** → Bildschirmaufnahme erlauben.
+1. App öffnen → **Mit ChatGPT anmelden** (optional) → **Overlay starten** → Bildschirmaufnahme erlauben.
 2. Schach-App öffnen, den ♞-Button an eine freie Stelle ziehen.
 3. Wenn du am Zug bist: **♞ antippen** → Cyan = Figur, Gelb = Zielfeld.
 4. **Lange drücken** öffnet das Menü: Auto-Modus, Brett manuell festlegen, mit AI neu einlesen,
@@ -41,18 +41,32 @@ danach läuft alles lokal. Die App zeigt die verbrauchten Tokens an.
 
 ## Login / AI-Anbieter
 
-* **Claude** – Anthropic API-Key ([hier erstellen](https://console.anthropic.com/settings/keys)),
-  Standardmodell `claude-opus-5-5` mit niedrigem Effort; `claude-haiku-5-5` ist günstiger.
-  Umgesetzt mit dem offiziellen Anthropic Java SDK.
-* **ChatGPT** – OpenAI API-Key ([hier erstellen](https://platform.openai.com/api-keys)),
-  Standardmodell `gpt-5-mini`, Bild mit `detail: low`.
+* **ChatGPT – „Mit ChatGPT anmelden“ (Standard):** OAuth-Login mit deinem ChatGPT-Plus/Pro-Abo,
+  **kein API-Key**. Die Bild-Erkennung läuft über das Kontingent deines Abos (OpenAIs offizielles
+  „Sign in with ChatGPT“ für Open-Source-Apps). Technisch: OAuth 2.0 + PKCE, Endpunkte per
+  OpenID-Discovery von `auth.openai.com`, Redirect über `http://127.0.0.1:1455/auth/callback`
+  (kleiner lokaler Server in der App), Tokens verschlüsselt im Android-Keystore, automatischer
+  Token-Refresh. Anfragen gehen an die Responses API.
 * **Keine AI** – funktioniert ab der Grundstellung komplett offline.
+* **Erweitert:** Claude oder OpenAI per API-Key.
 
-Ein Login mit dem **Claude-Pro/Max-Abo** (wie in Claude Code) oder dem **ChatGPT-Plus-Abo** ist
-für Drittanbieter-Apps nicht vorgesehen bzw. laut Nutzungsbedingungen nicht erlaubt – diese
-Abo-Logins gelten nur für die offiziellen Apps. Deshalb nutzt die App API-Keys; sie werden mit
-einem Schlüssel aus dem Android-Keystore verschlüsselt gespeichert und nur an den jeweiligen
-Anbieter gesendet.
+**Claude-Abo-Login gibt es nicht:** Anthropic erlaubt den OAuth-Login mit Claude Free/Pro/Max nur
+in Claude.ai und Claude Code. Fremd-Apps dürfen ihn laut Nutzungsbedingungen nicht anbieten, und
+Anthropic blockiert solche Clients auch technisch. Für Claude bleibt nur ein API-Key.
+
+### Einmalige Einrichtung für „Mit ChatGPT anmelden“ (Repo-Besitzer)
+
+Der Login braucht eine OAuth-**Client-ID**, die der Herausgeber der App bei OpenAI registriert:
+
+1. Im OpenAI-Developer-Portal unter „Sign in with ChatGPT“ eine Open-Source-App registrieren
+   (Plan-Nutzung / Token-Sharing) und als Redirect-URI `http://127.0.0.1:1455/auth/callback`
+   eintragen.
+2. Die Client-ID im GitHub-Repo unter *Settings → Secrets and variables → Actions → Variables*
+   als Variable **`CHATGPT_CLIENT_ID`** speichern.
+3. Einen neuen Build anstoßen (Push oder *Actions → Android APK → Run workflow*). Ab dann ist die
+   Client-ID in der APK eingebaut und jeder Nutzer tippt nur noch auf „Mit ChatGPT anmelden“.
+
+Alternativ kann die Client-ID in der App unter „Erweitert“ eingetragen werden.
 
 ## Fairplay
 
@@ -67,7 +81,7 @@ core/   reines Kotlin (lokal testbar, ohne Android)
   chess/    Zuggenerator, FEN, Make/Unmake (Perft-getestet)
   engine/   integrierte Alpha-Beta-Engine + UCI-Anbindung für Stockfish
   vision/   Brett-Lokalisierung, Feld-Merkmale, lernende Figuren-Bibliothek
-  ai/       Claude (Anthropic SDK) und OpenAI als Bild-zu-Stellung-Leser
+  ai/       Sign in with ChatGPT (OAuth/PKCE), Claude (Anthropic SDK), OpenAI API-Key
   Analyzer  Pipeline: Tracking → lokale Erkennung → Startstellung → AI (nur falls nötig)
 app/    Android: Overlay-Service (MediaProjection), ♞-Button, Leuchtpunkte, Einstellungen
 ```

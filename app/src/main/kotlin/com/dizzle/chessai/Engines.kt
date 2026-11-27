@@ -2,6 +2,7 @@ package com.dizzle.chessai
 
 import android.content.Context
 import android.graphics.Bitmap
+import com.dizzle.chessai.core.ai.ChatGptPlanVision
 import com.dizzle.chessai.core.ai.ClaudeVision
 import com.dizzle.chessai.core.ai.OpenAiVision
 import com.dizzle.chessai.core.ai.VisionProvider
@@ -55,6 +56,17 @@ object Vision {
     @Synchronized
     fun provider(prefs: Prefs): VisionProvider? {
         val (key, factory) = when (prefs.provider) {
+            AiProvider.CHATGPT_LOGIN -> {
+                if (prefs.chatGptTokens == null) return null
+                val m = prefs.openAiModel
+                "g|${prefs.chatGptClientId}|$m" to {
+                    ChatGptPlanVision(
+                        tokens = { ChatGptLogin.accessToken(prefs) },
+                        onUnauthorized = { ChatGptLogin.accessToken(prefs, force = true) },
+                        model = m,
+                    ) as VisionProvider
+                }
+            }
             AiProvider.CLAUDE -> {
                 val k = prefs.claudeKey
                 if (k.isBlank()) return null

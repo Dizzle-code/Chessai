@@ -11,14 +11,14 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-enum class AiProvider { CLAUDE, OPENAI, NONE }
+enum class AiProvider { CHATGPT_LOGIN, CLAUDE, OPENAI, NONE }
 
 /** App settings. API keys are encrypted with a key held in the Android Keystore. */
 class Prefs(context: Context) {
     private val sp = context.getSharedPreferences("chessai", Context.MODE_PRIVATE)
 
     var provider: AiProvider
-        get() = runCatching { AiProvider.valueOf(sp.getString("provider", AiProvider.CLAUDE.name)!!) }.getOrDefault(AiProvider.CLAUDE)
+        get() = runCatching { AiProvider.valueOf(sp.getString("provider", AiProvider.CHATGPT_LOGIN.name)!!) }.getOrDefault(AiProvider.CHATGPT_LOGIN)
         set(v) = sp.edit().putString("provider", v.name).apply()
 
     var claudeKey: String
@@ -28,6 +28,23 @@ class Prefs(context: Context) {
     var openAiKey: String
         get() = SecureStore.decrypt(sp.getString("openai_key", null)) ?: ""
         set(v) = sp.edit().putString("openai_key", SecureStore.encrypt(v.trim())).apply()
+
+    /** "Sign in with ChatGPT" tokens (encrypted). */
+    var chatGptTokens: com.dizzle.chessai.core.ai.OAuthTokens?
+        get() = com.dizzle.chessai.core.ai.OAuthTokens.decode(SecureStore.decrypt(sp.getString("chatgpt_tokens", null)))
+        set(v) = sp.edit().putString("chatgpt_tokens", v?.let { SecureStore.encrypt(it.encode()) }).apply()
+
+    /** OAuth client id: user override, else the one baked into the build. */
+    var chatGptClientIdOverride: String
+        get() = sp.getString("chatgpt_client_id", "") ?: ""
+        set(v) = sp.edit().putString("chatgpt_client_id", v.trim()).apply()
+
+    val chatGptClientId: String
+        get() = chatGptClientIdOverride.ifBlank { BuildConfig.CHATGPT_CLIENT_ID }
+
+    var showAdvanced: Boolean
+        get() = sp.getBoolean("show_advanced", false)
+        set(v) = sp.edit().putBoolean("show_advanced", v).apply()
 
     var claudeModel: String
         get() = sp.getString("claude_model", null)?.takeIf { it.isNotBlank() } ?: com.dizzle.chessai.core.ai.ClaudeVision.DEFAULT_MODEL

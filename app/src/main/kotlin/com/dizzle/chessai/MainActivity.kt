@@ -37,6 +37,11 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var claudeBox: LinearLayout
     private lateinit var openAiBox: LinearLayout
+    private lateinit var advancedBox: LinearLayout
+    private lateinit var loginBox: LinearLayout
+    private lateinit var loginStatus: TextView
+    private lateinit var loginButton: Button
+    private var advancedRadios: List<RadioButton> = emptyList()
 
     companion object {
         private const val REQ_CAPTURE = 42
@@ -91,35 +96,61 @@ class MainActivity : Activity() {
 
         // ---- AI provider
         val ai = card("Bilderkennung (nur wenn nötig)")
-        ai.addView(muted("Die App erkennt Figuren lokal und verfolgt die Partie selbst (0 Tokens). Die AI wird nur gefragt, wenn sie ein Figuren-Design zum ersten Mal sieht – meist 1× pro Design, ca. 350–450 Tokens."))
+        ai.addView(muted("Die App erkennt Figuren lokal und verfolgt die Partie selbst (0 Tokens). Die AI wird nur gefragt, wenn sie ein Figuren-Design zum ersten Mal sieht – meist 1× pro Design."))
         val group = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
-        val rbClaude = radio("Claude (Anthropic API-Key)", 1)
-        val rbOpenAi = radio("ChatGPT (OpenAI API-Key)", 2)
-        val rbNone = radio("Keine AI – nur lokal (Startstellung oder manuell)", 3)
-        group.addView(rbClaude); group.addView(rbOpenAi); group.addView(rbNone)
-        group.check(when (prefs.provider) { AiProvider.CLAUDE -> 1; AiProvider.OPENAI -> 2; AiProvider.NONE -> 3 })
+        group.addView(radio("ChatGPT – mit deinem Abo anmelden", 4))
+        group.addView(radio("Keine AI – nur lokal (ab Grundstellung)", 3))
+        advancedRadios = listOf(radio("Claude (Anthropic API-Key)", 1), radio("OpenAI API-Key", 2))
+        advancedRadios.forEach { group.addView(it) }
+        group.check(when (prefs.provider) { AiProvider.CHATGPT_LOGIN -> 4; AiProvider.CLAUDE -> 1; AiProvider.OPENAI -> 2; AiProvider.NONE -> 3 })
         ai.addView(group)
 
+        // ChatGPT login
+        loginBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        loginStatus = label("")
+        loginBox.addView(loginStatus)
+        loginButton = Button(this).apply {
+            isAllCaps = false
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply { setColor(0xFF10A37F.toInt()); cornerRadius = dp(12).toFloat() }
+            setOnClickListener { if (prefs.chatGptTokens != null) logoutChatGpt() else loginChatGpt() }
+        }
+        loginBox.addView(loginButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply { topMargin = dp(6) })
+        loginBox.addView(muted("Die Anfragen laufen über dein ChatGPT-Plus/Pro-Kontingent – kein API-Key nötig. Login-Daten werden verschlüsselt im Android-Keystore gespeichert."))
+        ai.addView(loginBox)
+
+        ai.addView(muted("Claude: Anthropic erlaubt den Login mit einem Claude-Pro/Max-Abo nur in den eigenen Apps (Claude, Claude Code) – fremde Apps dürfen ihn nicht nutzen. Für Claude bleibt daher nur ein API-Key (unter „Erweitert“)."))
+
+        // advanced: API keys + client id
+        advancedBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         claudeBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         claudeBox.addView(field("Anthropic API-Key (sk-ant-…)", prefs.claudeKey, secret = true) { prefs.claudeKey = it })
         claudeBox.addView(linkButton("API-Key bei Anthropic erstellen", "https://console.anthropic.com/settings/keys"))
-        claudeBox.addView(field("Modell", prefs.claudeModel, secret = false) { prefs.claudeModel = it })
+        claudeBox.addView(field("Claude-Modell", prefs.claudeModel, secret = false) { prefs.claudeModel = it })
         claudeBox.addView(muted("Tipp: „claude-haiku-5-5“ ist deutlich günstiger und reicht für Brett-Erkennung meist aus."))
-        ai.addView(claudeBox)
-
+        advancedBox.addView(claudeBox)
         openAiBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         openAiBox.addView(field("OpenAI API-Key (sk-…)", prefs.openAiKey, secret = true) { prefs.openAiKey = it })
         openAiBox.addView(linkButton("API-Key bei OpenAI erstellen", "https://platform.openai.com/api-keys"))
-        openAiBox.addView(field("Modell", prefs.openAiModel, secret = false) { prefs.openAiModel = it })
-        ai.addView(openAiBox)
-
-        ai.addView(muted("Hinweis: Ein Login mit Claude-Pro/Max- oder ChatGPT-Plus-Abo ist für Fremd-Apps nicht erlaubt bzw. nicht möglich – Abo-Logins gelten nur für die offiziellen Apps. Deshalb wird ein API-Key genutzt; er wird verschlüsselt im Android-Keystore gespeichert."))
+        advancedBox.addView(openAiBox)
+        advancedBox.addView(field("OpenAI-Modell (Login & API-Key)", prefs.openAiModel, secret = false) { prefs.openAiModel = it })
+        advancedBox.addView(field("OpenAI OAuth-Client-ID (optional)", prefs.chatGptClientIdOverride, secret = false) {
+            prefs.chatGptClientIdOverride = it; refreshLogin()
+        })
+        advancedBox.addView(muted("Die Client-ID ist normalerweise schon eingebaut. Nur nötig, wenn du die App selbst baust."))
+        val advToggle = switch("Erweitert (API-Keys, Modell, Client-ID)", prefs.showAdvanced) {
+            prefs.showAdvanced = it; updateProviderBoxes()
+        }
+        ai.addView(advToggle)
+        ai.addView(advancedBox)
 
         group.setOnCheckedChangeListener { _, id ->
-            prefs.provider = when (id) { 1 -> AiProvider.CLAUDE; 2 -> AiProvider.OPENAI; else -> AiProvider.NONE }
+            prefs.provider = when (id) { 4 -> AiProvider.CHATGPT_LOGIN; 1 -> AiProvider.CLAUDE; 2 -> AiProvider.OPENAI; else -> AiProvider.NONE }
             updateProviderBoxes()
         }
         updateProviderBoxes()
+        refreshLogin()
 
         // ---- game settings
         val game = card("Spiel")
@@ -162,8 +193,57 @@ class MainActivity : Activity() {
     }
 
     private fun updateProviderBoxes() {
+        val adv = prefs.showAdvanced || prefs.provider == AiProvider.CLAUDE || prefs.provider == AiProvider.OPENAI
+        advancedBox.visibility = if (adv) View.VISIBLE else View.GONE
+        advancedRadios.forEach { it.visibility = if (adv) View.VISIBLE else View.GONE }
         claudeBox.visibility = if (prefs.provider == AiProvider.CLAUDE) View.VISIBLE else View.GONE
         openAiBox.visibility = if (prefs.provider == AiProvider.OPENAI) View.VISIBLE else View.GONE
+        loginBox.visibility = if (prefs.provider == AiProvider.CHATGPT_LOGIN) View.VISIBLE else View.GONE
+    }
+
+    private fun refreshLogin() {
+        val t = prefs.chatGptTokens
+        when {
+            loginRunning -> { loginStatus.text = "Anmeldung läuft im Browser …"; loginButton.text = "Bitte im Browser bestätigen" }
+            t != null -> { loginStatus.text = "✓ Angemeldet" + (t.email?.let { " als $it" } ?: ""); loginButton.text = "Abmelden" }
+            else -> { loginStatus.text = "Nicht angemeldet"; loginButton.text = "Mit ChatGPT anmelden" }
+        }
+    }
+
+    @Volatile private var loginRunning = false
+
+    private fun loginChatGpt() {
+        if (loginRunning) return
+        if (prefs.chatGptClientId.isBlank()) {
+            Toast.makeText(this, "In diesem Build ist keine OpenAI-Client-ID hinterlegt – siehe README", Toast.LENGTH_LONG).show()
+            prefs.showAdvanced = true; updateProviderBoxes()
+            return
+        }
+        loginRunning = true
+        refreshLogin()
+        Thread {
+            val result = runCatching {
+                ChatGptLogin.run(prefs) { url ->
+                    runOnUiThread { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                }
+            }
+            runOnUiThread {
+                loginRunning = false
+                refreshLogin()
+                result.exceptionOrNull()?.let { Toast.makeText(this, it.message ?: "Login fehlgeschlagen", Toast.LENGTH_LONG).show() }
+                    ?: Toast.makeText(this, "Mit ChatGPT angemeldet", Toast.LENGTH_SHORT).show()
+            }
+        }.start()
+    }
+
+    private fun logoutChatGpt() {
+        prefs.chatGptTokens = null
+        refreshLogin()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        refreshLogin()
     }
 
     private fun refreshStatus() {
@@ -180,10 +260,11 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             return
         }
-        if (prefs.provider == AiProvider.CLAUDE && prefs.claudeKey.isBlank() ||
+        if (prefs.provider == AiProvider.CHATGPT_LOGIN && prefs.chatGptTokens == null ||
+            prefs.provider == AiProvider.CLAUDE && prefs.claudeKey.isBlank() ||
             prefs.provider == AiProvider.OPENAI && prefs.openAiKey.isBlank()
         ) {
-            Toast.makeText(this, "Kein API-Key – es wird nur lokal erkannt (Startstellung / gelernte Figuren)", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Keine AI verbunden – es wird nur lokal erkannt (Startstellung / gelernte Figuren)", Toast.LENGTH_LONG).show()
         }
         val mpm = getSystemService(MediaProjectionManager::class.java)!!
         @Suppress("DEPRECATION")
