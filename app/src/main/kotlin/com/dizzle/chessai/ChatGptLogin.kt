@@ -20,7 +20,7 @@ object ChatGptLogin {
      * Runs the whole flow on the calling (background) thread. [openBrowser] is called with the
      * authorization URL. Returns the tokens or throws with a user-readable message.
      */
-    fun run(prefs: Prefs, openBrowser: (String) -> Unit): OAuthTokens {
+    fun run(prefs: Prefs, openBrowser: (String) -> Unit, awaitForeground: () -> Unit = {}): OAuthTokens {
         val oauth = ChatGptOAuth(prefs.chatGptIssuedClientId.ifBlank { null }, prefs.hostId)
         oauth.discover()
         val server = try {
@@ -53,17 +53,15 @@ object ChatGptLogin {
                         respond(s, 400, page("Ungültige Antwort", "Bitte erneut anmelden."))
                         throw IllegalStateException("Ungültige Login-Antwort (state)")
                     }
-                    val tokens = try {
-                        oauth.exchange(pending, q["code"]!!, q["client_id"])
-                    } catch (e: Exception) {
-                        respond(s, 200, page("Anmeldung fehlgeschlagen", e.message ?: "Fehler"))
-                        throw e
-                    }
-                    respond(s, 200, page("Angemeldet ✓", "Du kannst jetzt zur Chess-AI-App zurückkehren.", redirect = true))
+                    respond(s, 200, page("Fast geschafft ✓", "Zurück zur Chess-AI-App – die Anmeldung wird dort abgeschlossen.", redirect = true))
+                    // Many phones block network access for apps in the background (data saver,
+                    // battery optimisation). Finish the token exchange once the app is visible again.
+                    awaitForeground()
+                    val tokens = withNetworkRetry { oauth.exchange(pending, q["code"]!!, q["client_id"]) }
                     prefs.chatGptTokens = tokens
                     prefs.chatGptIssuedClientId = tokens.clientId
                     // pick a model this plan offers (prefer a small, cheap one)
-                    val models = runCatching { oauth.listModels(tokens.accessToken) }.getOrDefault(emptyList())
+                    val models = runCatching { withNetworkRetry { oauth.listModels(tokens.accessToken) } }.getOrDefault(emptyList())
                     if (models.isNotEmpty()) {
                         prefs.chatGptModels = models
                         if (prefs.openAiModel !in models) {
@@ -81,9 +79,28 @@ object ChatGptLogin {
     fun accessToken(prefs: Prefs, force: Boolean = false): String {
         val t = prefs.chatGptTokens ?: throw IllegalStateException("Nicht mit ChatGPT angemeldet")
         if (!force && !t.isExpired()) return t.accessToken
-        val fresh = ChatGptOAuth(t.clientId, prefs.hostId).refresh(t)
+        val fresh = withNetworkRetry { ChatGptOAuth(t.clientId, prefs.hostId).refresh(t) }
         prefs.chatGptTokens = fresh
         return fresh.accessToken
+    }
+
+    /** Retries transient network failures (DNS not yet available, connection resets). */
+    fun <T> withNetworkRetry(attempts: Int = 5, block: () -> T): T {
+        var last: Exception? = null
+        repeat(attempts) { i ->
+            try {
+                return block()
+            } catch (e: java.io.IOException) {
+                last = e
+                Thread.sleep(1500L * (i + 1))
+            }
+        }
+        val e = last!!
+        throw IllegalStateException(
+            if (e is java.net.UnknownHostException)
+                "Keine Verbindung zu OpenAI (${e.message}). Prüfe Internet, Datensparmodus bzw. Hintergrunddaten für Chess AI und ob ein Werbeblocker/Private DNS openai.com blockiert."
+            else "Netzwerkfehler: ${e.message}", e,
+        )
     }
 
     private fun parseQuery(q: String): Map<String, String> = q.split('&').filter { '=' in it }.associate {

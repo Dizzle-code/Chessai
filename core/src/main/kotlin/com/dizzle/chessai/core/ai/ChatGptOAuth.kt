@@ -60,10 +60,13 @@ class ChatGptOAuth(
 
     data class Pending(val url: String, val state: String, val verifier: String, val redirectUri: String, val nonce: String)
 
-    /** Loads authorization/token endpoints (falls back to known defaults if discovery fails). */
+    private var discovered = false
+
+    /** Loads authorization/token endpoints (falls back to known defaults if discovery fails; retried later). */
     fun discover() {
-        if (authEndpoint != null) return
+        if (discovered) return
         val doc = runCatching { getJson("$issuer/.well-known/openid-configuration") }.getOrNull()
+        discovered = doc != null
         authEndpoint = doc?.path("authorization_endpoint")?.asText()?.takeIf { it.isNotBlank() } ?: "$issuer/api/accounts/authorize"
         tokenEndpoint = doc?.path("token_endpoint")?.asText()?.takeIf { it.isNotBlank() } ?: "$issuer/api/accounts/oauth/token"
     }

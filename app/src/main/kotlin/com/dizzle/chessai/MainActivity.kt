@@ -60,9 +60,32 @@ class MainActivity : Activity() {
         buildUi()
     }
 
+    private val resumeLock = Object()
+    @Volatile private var resumed = false
+
     override fun onResume() {
         super.onResume()
+        synchronized(resumeLock) { resumed = true; resumeLock.notifyAll() }
         refreshStatus()
+        if (::loginStatus.isInitialized) refreshLogin()
+    }
+
+    override fun onPause() {
+        synchronized(resumeLock) { resumed = false }
+        super.onPause()
+    }
+
+    /** Blocks (background thread) until this activity is in the foreground again, or timeout. */
+    private fun awaitResumed(timeoutMs: Long) {
+        val end = System.currentTimeMillis() + timeoutMs
+        synchronized(resumeLock) {
+            while (!resumed) {
+                val left = end - System.currentTimeMillis()
+                if (left <= 0) break
+                resumeLock.wait(left)
+            }
+        }
+        Thread.sleep(400) // let the network policy switch to foreground
     }
 
     private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
@@ -200,7 +223,7 @@ class MainActivity : Activity() {
     private fun refreshLogin() {
         val t = prefs.chatGptTokens
         when {
-            loginRunning -> { loginStatus.text = "Anmeldung läuft im Browser …"; loginButton.text = "Bitte im Browser bestätigen" }
+            loginRunning -> { loginStatus.text = "Anmeldung läuft …"; loginButton.text = "Bitte im Browser bestätigen" }
             t != null -> { loginStatus.text = "✓ Angemeldet" + (t.email?.let { " als $it" } ?: ""); loginButton.text = "Abmelden" }
             else -> { loginStatus.text = "Nicht angemeldet"; loginButton.text = "Mit ChatGPT anmelden" }
         }
@@ -214,9 +237,11 @@ class MainActivity : Activity() {
         refreshLogin()
         Thread {
             val result = runCatching {
-                ChatGptLogin.run(prefs) { url ->
-                    runOnUiThread { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-                }
+                ChatGptLogin.run(
+                    prefs,
+                    openBrowser = { url -> runOnUiThread { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } },
+                    awaitForeground = { awaitResumed(90_000) },
+                )
             }
             runOnUiThread {
                 loginRunning = false
