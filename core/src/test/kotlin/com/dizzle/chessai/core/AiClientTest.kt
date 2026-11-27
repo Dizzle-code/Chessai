@@ -109,6 +109,12 @@ class ChatGptOAuthTest {
             reply(ex, 200, mapOf("access_token" to "AT${++calls}", "refresh_token" to "RT", "expires_in" to 3600,
                 "id_token" to "h.$payload.s", "scope" to "openid offline_access resource.invoke chatgpt.tokens.use.direct"))
         }
+        server.createContext("/v1/models") { ex ->
+            reply(ex, 200, mapOf("models" to listOf(
+                mapOf("slug" to "gpt-5.5", "display_name" to "GPT-5.5", "visibility" to "list"),
+                mapOf("slug" to "hidden", "visibility" to "hide"),
+                mapOf("slug" to "gpt-5.5-mini", "display_name" to "GPT-5.5 mini", "visibility" to "list"))))
+        }
         var first = true
         server.createContext("/v1/responses") { ex ->
             val auth = ex.requestHeaders.getFirst("Authorization")
@@ -124,23 +130,41 @@ class ChatGptOAuthTest {
 
     @AfterTest fun stop() = server.stop(0)
 
-    @Test fun pkceFlow() {
-        val o = ChatGptOAuth("client-123", issuer = base)
+    @Test fun pkceFlowWithDynamicClient() {
+        // first sign-in: placeholder client, OpenAI issues the real client id on the callback
+        val o = ChatGptOAuth(savedClientId = null, hostId = "urn:uuid:test-host", issuer = base)
         o.discover()
         val p = o.begin("http://127.0.0.1:1455/auth/callback")
         assertTrue(p.url.startsWith("$base/authorize?"))
-        for (part in listOf("client_id=client-123", "code_challenge_method=S256", "response_type=code",
-            "chatgpt.tokens.use.direct", "resource=https%3A%2F%2Fapi.openai.com%2Fv1", "state=${p.state}")) {
+        for (part in listOf("client_id=dynamic_agent_client", "agent_name_hint=Chess+AI", "ext_agent_host_id=urn%3Auuid%3Atest-host",
+            "code_challenge_method=S256", "response_type=code", "chatgpt.tokens.use.direct",
+            "resource=https%3A%2F%2Fapi.openai.com%2Fv1", "state=${p.state}", "nonce=${p.nonce}")) {
             assertTrue(part in p.url, "missing $part in ${p.url}")
         }
-        val t = o.exchange(p, "the-code")
+        val t = o.exchange(p, "the-code", returnedClientId = "app_issued_42")
         assertEquals("AT1", t.accessToken)
+        assertEquals("app_issued_42", t.clientId)
         assertEquals("me@example.com", t.email)
-        assertTrue("code_verifier=${p.verifier}" in tokenForm && "grant_type=authorization_code" in tokenForm)
+        assertTrue("code_verifier=${p.verifier}" in tokenForm && "grant_type=authorization_code" in tokenForm &&
+            "client_id=app_issued_42" in tokenForm)
         val r = o.refresh(t)
         assertEquals("AT2", r.accessToken)
-        assertTrue("grant_type=refresh_token" in tokenForm)
+        assertEquals("app_issued_42", r.clientId)
+        assertTrue("grant_type=refresh_token" in tokenForm && "client_id=app_issued_42" in tokenForm)
         assertEquals(t, OAuthTokens.decode(t.encode()))
+
+        // later sign-in reuses the issued client and sends no name hint
+        val again = ChatGptOAuth(savedClientId = "app_issued_42", hostId = "urn:uuid:test-host", issuer = base).apply { discover() }
+            .begin("http://127.0.0.1:1455/auth/callback")
+        assertTrue("client_id=app_issued_42" in again.url && "agent_name_hint" !in again.url)
+
+        // the placeholder must never be accepted as the issued id
+        assertTrue(runCatching { o.exchange(p, "c", returnedClientId = "dynamic_agent_client") }.isFailure)
+    }
+
+    @Test fun listsPlanModels() {
+        val models = ChatGptOAuth(issuer = base).listModels("AT", "$base/v1/models")
+        assertEquals(listOf("gpt-5.5", "gpt-5.5-mini"), models)
     }
 
     @Test fun planVisionRefreshesOn401() {

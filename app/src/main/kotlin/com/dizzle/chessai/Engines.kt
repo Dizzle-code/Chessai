@@ -59,7 +59,7 @@ object Vision {
             AiProvider.CHATGPT_LOGIN -> {
                 if (prefs.chatGptTokens == null) return null
                 val m = prefs.openAiModel
-                "g|${prefs.chatGptClientId}|$m" to {
+                "g|$m" to {
                     ChatGptPlanVision(
                         tokens = { ChatGptLogin.accessToken(prefs) },
                         onUnauthorized = { ChatGptLogin.accessToken(prefs, force = true) },

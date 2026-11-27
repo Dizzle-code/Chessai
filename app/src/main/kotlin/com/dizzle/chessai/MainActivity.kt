@@ -135,11 +135,7 @@ class MainActivity : Activity() {
         openAiBox.addView(linkButton("API-Key bei OpenAI erstellen", "https://platform.openai.com/api-keys"))
         advancedBox.addView(openAiBox)
         advancedBox.addView(field("OpenAI-Modell (Login & API-Key)", prefs.openAiModel, secret = false) { prefs.openAiModel = it })
-        advancedBox.addView(field("OpenAI OAuth-Client-ID (optional)", prefs.chatGptClientIdOverride, secret = false) {
-            prefs.chatGptClientIdOverride = it; refreshLogin()
-        })
-        advancedBox.addView(muted("Die Client-ID ist normalerweise schon eingebaut. Nur nötig, wenn du die App selbst baust."))
-        val advToggle = switch("Erweitert (API-Keys, Modell, Client-ID)", prefs.showAdvanced) {
+        val advToggle = switch("Erweitert (API-Keys, Modell)", prefs.showAdvanced) {
             prefs.showAdvanced = it; updateProviderBoxes()
         }
         ai.addView(advToggle)
@@ -214,11 +210,6 @@ class MainActivity : Activity() {
 
     private fun loginChatGpt() {
         if (loginRunning) return
-        if (prefs.chatGptClientId.isBlank()) {
-            Toast.makeText(this, "In diesem Build ist keine OpenAI-Client-ID hinterlegt – siehe README", Toast.LENGTH_LONG).show()
-            prefs.showAdvanced = true; updateProviderBoxes()
-            return
-        }
         loginRunning = true
         refreshLogin()
         Thread {
@@ -231,7 +222,7 @@ class MainActivity : Activity() {
                 loginRunning = false
                 refreshLogin()
                 result.exceptionOrNull()?.let { Toast.makeText(this, it.message ?: "Login fehlgeschlagen", Toast.LENGTH_LONG).show() }
-                    ?: Toast.makeText(this, "Mit ChatGPT angemeldet", Toast.LENGTH_SHORT).show()
+                        ?: Toast.makeText(this, "Mit ChatGPT angemeldet · Modell: ${prefs.openAiModel}", Toast.LENGTH_SHORT).show()
             }
         }.start()
     }

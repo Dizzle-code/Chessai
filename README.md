@@ -44,7 +44,8 @@ danach läuft alles lokal. Die App zeigt die verbrauchten Tokens an.
 * **ChatGPT – „Mit ChatGPT anmelden“ (Standard):** OAuth-Login mit deinem ChatGPT-Plus/Pro-Abo,
   **kein API-Key**. Die Bild-Erkennung läuft über das Kontingent deines Abos (OpenAIs offizielles
   „Sign in with ChatGPT“ für Open-Source-Apps). Technisch: OAuth 2.0 + PKCE, Endpunkte per
-  OpenID-Discovery von `auth.openai.com`, Redirect über `http://127.0.0.1:1455/auth/callback`
+  OpenID-Discovery von `auth.openai.com`, dynamische Client-Registrierung, Redirect über
+  `http://127.0.0.1:1455/auth/callback`
   (kleiner lokaler Server in der App), Tokens verschlüsselt im Android-Keystore, automatischer
   Token-Refresh. Anfragen gehen an die Responses API.
 * **Keine AI** – funktioniert ab der Grundstellung komplett offline.
@@ -54,19 +55,12 @@ danach läuft alles lokal. Die App zeigt die verbrauchten Tokens an.
 in Claude.ai und Claude Code. Fremd-Apps dürfen ihn laut Nutzungsbedingungen nicht anbieten, und
 Anthropic blockiert solche Clients auch technisch. Für Claude bleibt nur ein API-Key.
 
-### Einmalige Einrichtung für „Mit ChatGPT anmelden“ (Repo-Besitzer)
-
-Der Login braucht eine OAuth-**Client-ID**, die der Herausgeber der App bei OpenAI registriert:
-
-1. Im OpenAI-Developer-Portal unter „Sign in with ChatGPT“ eine Open-Source-App registrieren
-   (Plan-Nutzung / Token-Sharing) und als Redirect-URI `http://127.0.0.1:1455/auth/callback`
-   eintragen.
-2. Die Client-ID im GitHub-Repo unter *Settings → Secrets and variables → Actions → Variables*
-   als Variable **`CHATGPT_CLIENT_ID`** speichern.
-3. Einen neuen Build anstoßen (Push oder *Actions → Android APK → Run workflow*). Ab dann ist die
-   Client-ID in der APK eingebaut und jeder Nutzer tippt nur noch auf „Mit ChatGPT anmelden“.
-
-Alternativ kann die Client-ID in der App unter „Erweitert“ eingetragen werden.
+Keine Einrichtung nötig: Wie in OpenAIs offiziellem
+[sign-in-with-chatgpt-devkit](https://github.com/openai/sign-in-with-chatgpt-devkit) meldet sich
+die App beim ersten Login mit dem Platzhalter-Client `dynamic_agent_client` an. ChatGPT vergibt
+dabei automatisch eine eigene Client-ID für diese Installation, die die App speichert und für
+spätere Logins und Token-Refreshes verwendet. Nach dem Login lädt die App die Modelle, die dein
+Plan anbietet, und wählt ein kleines davon.
 
 ## Fairplay
 

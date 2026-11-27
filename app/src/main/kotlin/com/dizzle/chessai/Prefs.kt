@@ -34,13 +34,21 @@ class Prefs(context: Context) {
         get() = com.dizzle.chessai.core.ai.OAuthTokens.decode(SecureStore.decrypt(sp.getString("chatgpt_tokens", null)))
         set(v) = sp.edit().putString("chatgpt_tokens", v?.let { SecureStore.encrypt(it.encode()) }).apply()
 
-    /** OAuth client id: user override, else the one baked into the build. */
-    var chatGptClientIdOverride: String
-        get() = sp.getString("chatgpt_client_id", "") ?: ""
-        set(v) = sp.edit().putString("chatgpt_client_id", v.trim()).apply()
+    /** Client id that ChatGPT issued to this installation at the first sign-in (kept after logout). */
+    var chatGptIssuedClientId: String
+        get() = sp.getString("chatgpt_issued_client_id", "") ?: ""
+        set(v) = sp.edit().putString("chatgpt_issued_client_id", v).apply()
 
-    val chatGptClientId: String
-        get() = chatGptClientIdOverride.ifBlank { BuildConfig.CHATGPT_CLIENT_ID }
+    /** Stable per-installation id sent as ext_agent_host_id. */
+    val hostId: String
+        get() = sp.getString("host_id", null) ?: ("urn:uuid:" + java.util.UUID.randomUUID()).also {
+            sp.edit().putString("host_id", it).apply()
+        }
+
+    /** Models offered by the signed-in ChatGPT plan (comma separated). */
+    var chatGptModels: List<String>
+        get() = sp.getString("chatgpt_models", "")!!.split(',').filter { it.isNotBlank() }
+        set(v) = sp.edit().putString("chatgpt_models", v.joinToString(",")).apply()
 
     var showAdvanced: Boolean
         get() = sp.getBoolean("show_advanced", false)

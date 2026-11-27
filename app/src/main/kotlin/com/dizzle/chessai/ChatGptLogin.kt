@@ -21,11 +21,7 @@ object ChatGptLogin {
      * authorization URL. Returns the tokens or throws with a user-readable message.
      */
     fun run(prefs: Prefs, openBrowser: (String) -> Unit): OAuthTokens {
-        val clientId = prefs.chatGptClientId
-        require(clientId.isNotBlank()) {
-            "Keine OpenAI-Client-ID hinterlegt. Unter „Erweitert“ eintragen (siehe README)."
-        }
-        val oauth = ChatGptOAuth(clientId)
+        val oauth = ChatGptOAuth(prefs.chatGptIssuedClientId.ifBlank { null }, prefs.hostId)
         oauth.discover()
         val server = try {
             ServerSocket(PREFERRED_PORT, 1, InetAddress.getByName("127.0.0.1"))
@@ -58,13 +54,22 @@ object ChatGptLogin {
                         throw IllegalStateException("Ungültige Login-Antwort (state)")
                     }
                     val tokens = try {
-                        oauth.exchange(pending, q["code"]!!)
+                        oauth.exchange(pending, q["code"]!!, q["client_id"])
                     } catch (e: Exception) {
                         respond(s, 200, page("Anmeldung fehlgeschlagen", e.message ?: "Fehler"))
                         throw e
                     }
                     respond(s, 200, page("Angemeldet ✓", "Du kannst jetzt zur Chess-AI-App zurückkehren.", redirect = true))
                     prefs.chatGptTokens = tokens
+                    prefs.chatGptIssuedClientId = tokens.clientId
+                    // pick a model this plan offers (prefer a small, cheap one)
+                    val models = runCatching { oauth.listModels(tokens.accessToken) }.getOrDefault(emptyList())
+                    if (models.isNotEmpty()) {
+                        prefs.chatGptModels = models
+                        if (prefs.openAiModel !in models) {
+                            prefs.openAiModel = models.firstOrNull { "mini" in it } ?: models.first()
+                        }
+                    }
                     return tokens
                 }
             }
@@ -76,7 +81,7 @@ object ChatGptLogin {
     fun accessToken(prefs: Prefs, force: Boolean = false): String {
         val t = prefs.chatGptTokens ?: throw IllegalStateException("Nicht mit ChatGPT angemeldet")
         if (!force && !t.isExpired()) return t.accessToken
-        val fresh = ChatGptOAuth(prefs.chatGptClientId).refresh(t)
+        val fresh = ChatGptOAuth(t.clientId, prefs.hostId).refresh(t)
         prefs.chatGptTokens = fresh
         return fresh.accessToken
     }

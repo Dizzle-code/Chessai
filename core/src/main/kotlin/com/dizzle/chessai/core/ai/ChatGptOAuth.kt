@@ -17,11 +17,13 @@ data class OAuthTokens(
     val expiresAt: Long,
     val email: String?,
     val scope: String?,
+    /** Client id that OpenAI issued to this app installation at the first sign-in. */
+    val clientId: String = "",
 ) {
     fun isExpired(now: Long = System.currentTimeMillis()) = now > expiresAt - 60_000
 
     fun encode(): String = ObjectMapper().writeValueAsString(
-        mapOf("a" to accessToken, "r" to refreshToken, "e" to expiresAt, "m" to email, "s" to scope)
+        mapOf("a" to accessToken, "r" to refreshToken, "e" to expiresAt, "m" to email, "s" to scope, "c" to clientId)
     )
 
     companion object {
@@ -30,33 +32,40 @@ data class OAuthTokens(
             return runCatching {
                 val n = ObjectMapper().readTree(s)
                 OAuthTokens(n["a"].asText(), n["r"]?.takeIf { !it.isNull }?.asText(), n["e"].asLong(),
-                    n["m"]?.takeIf { !it.isNull }?.asText(), n["s"]?.takeIf { !it.isNull }?.asText())
+                    n["m"]?.takeIf { !it.isNull }?.asText(), n["s"]?.takeIf { !it.isNull }?.asText(),
+                    n["c"]?.takeIf { !it.isNull }?.asText() ?: "")
             }.getOrNull()
         }
     }
 }
 
 /**
- * "Sign in with ChatGPT" (OAuth 2.0 + PKCE, public client, loopback redirect). With the
- * plan-usage scopes the access token lets the app run requests against the user's ChatGPT plan
- * instead of an API key. Endpoints are taken from OpenAI's OpenID discovery document at runtime.
+ * "Sign in with ChatGPT" for open-source apps (OAuth 2.0 + PKCE, public client, loopback redirect),
+ * following OpenAI's sign-in-with-chatgpt-devkit: no pre-registered client is needed. The first
+ * sign-in uses the placeholder client "dynamic_agent_client" and OpenAI returns the client id it
+ * issued for this installation on the callback; later sign-ins and refreshes use that id.
+ * With the plan-usage scopes the access token runs requests against the user's ChatGPT plan.
  */
 class ChatGptOAuth(
-    private val clientId: String,
+    /** Client id issued earlier (null/blank = first sign-in, dynamic registration). */
+    private val savedClientId: String? = null,
+    /** Stable per-installation id ("urn:uuid:..."). */
+    private val hostId: String? = null,
+    private val appName: String = "Chess AI",
     private val issuer: String = ISSUER,
 ) {
     private val mapper = ObjectMapper()
     private var authEndpoint: String? = null
     private var tokenEndpoint: String? = null
 
-    data class Pending(val url: String, val state: String, val verifier: String, val redirectUri: String)
+    data class Pending(val url: String, val state: String, val verifier: String, val redirectUri: String, val nonce: String)
 
     /** Loads authorization/token endpoints (falls back to known defaults if discovery fails). */
     fun discover() {
         if (authEndpoint != null) return
         val doc = runCatching { getJson("$issuer/.well-known/openid-configuration") }.getOrNull()
-        authEndpoint = doc?.path("authorization_endpoint")?.asText()?.takeIf { it.isNotBlank() } ?: "$issuer/oauth/authorize"
-        tokenEndpoint = doc?.path("token_endpoint")?.asText()?.takeIf { it.isNotBlank() } ?: "$issuer/oauth/token"
+        authEndpoint = doc?.path("authorization_endpoint")?.asText()?.takeIf { it.isNotBlank() } ?: "$issuer/api/accounts/authorize"
+        tokenEndpoint = doc?.path("token_endpoint")?.asText()?.takeIf { it.isNotBlank() } ?: "$issuer/api/accounts/oauth/token"
     }
 
     /** Builds the URL to open in the browser. Call [discover] first (network). */
@@ -64,32 +73,42 @@ class ChatGptOAuth(
         val verifier = randomUrlSafe(64)
         val challenge = b64url(MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)))
         val state = randomUrlSafe(24)
+        val nonce = randomUrlSafe(24)
+        val saved = savedClientId?.takeIf { it.isNotBlank() }
         val params = linkedMapOf(
             "response_type" to "code",
-            "client_id" to clientId,
+            "client_id" to (saved ?: DYNAMIC_CLIENT),
             "redirect_uri" to redirectUri,
             "scope" to SCOPES,
             "resource" to RESOURCE,
             "code_challenge" to challenge,
             "code_challenge_method" to "S256",
             "state" to state,
+            "nonce" to nonce,
         )
-        val url = (authEndpoint ?: "$issuer/oauth/authorize") + "?" + form(params)
-        return Pending(url, state, verifier, redirectUri)
+        if (hostId != null) params["ext_agent_host_id"] = hostId
+        if (saved == null) params["agent_name_hint"] = appName
+        val url = (authEndpoint ?: "$issuer/api/accounts/authorize") + "?" + form(params)
+        return Pending(url, state, verifier, redirectUri, nonce)
     }
 
-    /** Exchanges the authorization code for tokens. */
-    fun exchange(p: Pending, code: String): OAuthTokens {
+    /**
+     * Exchanges the authorization code for tokens. [returnedClientId] is the `client_id` query
+     * parameter on the callback (the id OpenAI issued at the first sign-in).
+     */
+    fun exchange(p: Pending, code: String, returnedClientId: String? = null): OAuthTokens {
         discover()
+        val clientId = returnedClientId?.takeIf { it.isNotBlank() } ?: savedClientId?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("ChatGPT hat keine Client-ID für diese App vergeben")
+        require(clientId != DYNAMIC_CLIENT && CLIENT_ID_RE.matches(clientId)) { "Ungültige Client-ID von ChatGPT" }
         val json = postForm(tokenEndpoint!!, linkedMapOf(
             "grant_type" to "authorization_code",
             "code" to code,
             "redirect_uri" to p.redirectUri,
             "client_id" to clientId,
             "code_verifier" to p.verifier,
-            "resource" to RESOURCE,
         ))
-        val t = parseTokens(json, null)
+        val t = parseTokens(json, null, clientId)
         val granted = t.scope
         if (granted != null && PLAN_SCOPE !in granted.split(' ')) {
             throw IllegalStateException("Angemeldet, aber ChatGPT hat die Plan-Nutzung nicht freigegeben (Scope $PLAN_SCOPE fehlt).")
@@ -103,13 +122,29 @@ class ChatGptOAuth(
         val json = postForm(tokenEndpoint!!, linkedMapOf(
             "grant_type" to "refresh_token",
             "refresh_token" to rt,
-            "client_id" to clientId,
-            "resource" to RESOURCE,
+            "client_id" to t.clientId,
         ))
-        return parseTokens(json, t)
+        return parseTokens(json, t, t.clientId)
     }
 
-    private fun parseTokens(n: JsonNode, old: OAuthTokens?): OAuthTokens {
+    /** Models the signed-in ChatGPT plan may use (slugs), from GET /v1/models. */
+    fun listModels(accessToken: String, endpoint: String = "https://api.openai.com/v1/models"): List<String> {
+        val c = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000; readTimeout = 20_000
+            setRequestProperty("Authorization", "Bearer $accessToken")
+            setRequestProperty("Accept", "application/json")
+        }
+        if (c.responseCode !in 200..299) return emptyList()
+        val n = c.inputStream.use { mapper.readTree(it) }
+        val out = ArrayList<String>()
+        for (m in n.path("models")) {
+            if (m.path("visibility").asText("list") == "list") m.path("slug").asText("").takeIf { it.isNotEmpty() }?.let(out::add)
+        }
+        if (out.isEmpty()) for (m in n.path("data")) m.path("id").asText("").takeIf { it.isNotEmpty() }?.let(out::add)
+        return out
+    }
+
+    private fun parseTokens(n: JsonNode, old: OAuthTokens?, clientId: String): OAuthTokens {
         val access = n.path("access_token").asText("")
         require(access.isNotEmpty()) { "Keine Tokens erhalten: ${n.toString().take(200)}" }
         val expiresIn = n.path("expires_in").asLong(3600)
@@ -120,6 +155,7 @@ class ChatGptOAuth(
             expiresAt = System.currentTimeMillis() + expiresIn * 1000,
             email = email,
             scope = n.path("scope").asText("").ifEmpty { old?.scope },
+            clientId = clientId,
         )
     }
 
@@ -151,6 +187,8 @@ class ChatGptOAuth(
 
     companion object {
         const val ISSUER = "https://auth.openai.com"
+        const val DYNAMIC_CLIENT = "dynamic_agent_client"
+        private val CLIENT_ID_RE = Regex("^[a-zA-Z0-9_-]{1,200}$")
         const val RESOURCE = "https://api.openai.com/v1"
         const val PLAN_SCOPE = "chatgpt.tokens.use.direct"
         const val SCOPES = "openid profile email offline_access resource.invoke $PLAN_SCOPE"

@@ -15,13 +15,6 @@ android {
         targetSdk = 35
         versionCode = runNumber
         versionName = "1.0.$runNumber"
-        // OAuth client id for "Sign in with ChatGPT" (GitHub Actions variable CHATGPT_CLIENT_ID)
-        val clientId = System.getenv("CHATGPT_CLIENT_ID") ?: (project.findProperty("chatgptClientId") as String?) ?: ""
-        buildConfigField("String", "CHATGPT_CLIENT_ID", "\"$clientId\"")
-    }
-
-    buildFeatures {
-        buildConfig = true
     }
 
     signingConfigs {
