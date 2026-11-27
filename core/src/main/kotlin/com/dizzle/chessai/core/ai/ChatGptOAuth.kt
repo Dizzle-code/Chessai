@@ -110,6 +110,7 @@ class ChatGptOAuth(
             "redirect_uri" to p.redirectUri,
             "client_id" to clientId,
             "code_verifier" to p.verifier,
+            "resource" to RESOURCE,
         ))
         val t = parseTokens(json, null, clientId)
         val granted = t.scope
@@ -126,6 +127,7 @@ class ChatGptOAuth(
             "grant_type" to "refresh_token",
             "refresh_token" to rt,
             "client_id" to t.clientId,
+            "resource" to RESOURCE,
         ))
         return parseTokens(json, t, t.clientId)
     }

@@ -146,11 +146,12 @@ class ChatGptOAuthTest {
         assertEquals("app_issued_42", t.clientId)
         assertEquals("me@example.com", t.email)
         assertTrue("code_verifier=${p.verifier}" in tokenForm && "grant_type=authorization_code" in tokenForm &&
-            "client_id=app_issued_42" in tokenForm)
+            "client_id=app_issued_42" in tokenForm && "resource=https%3A%2F%2Fapi.openai.com%2Fv1" in tokenForm &&
+            "redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fauth%2Fcallback" in tokenForm)
         val r = o.refresh(t)
         assertEquals("AT2", r.accessToken)
         assertEquals("app_issued_42", r.clientId)
-        assertTrue("grant_type=refresh_token" in tokenForm && "client_id=app_issued_42" in tokenForm)
+        assertTrue("grant_type=refresh_token" in tokenForm && "client_id=app_issued_42" in tokenForm && "resource=" in tokenForm)
         assertEquals(t, OAuthTokens.decode(t.encode()))
 
         // later sign-in reuses the issued client and sends no name hint

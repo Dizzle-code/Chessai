@@ -53,11 +53,23 @@ object ChatGptLogin {
                         respond(s, 400, page("Ungültige Antwort", "Bitte erneut anmelden."))
                         throw IllegalStateException("Ungültige Login-Antwort (state)")
                     }
-                    respond(s, 200, page("Fast geschafft ✓", "Zurück zur Chess-AI-App – die Anmeldung wird dort abgeschlossen.", redirect = true))
-                    // Many phones block network access for apps in the background (data saver,
-                    // battery optimisation). Finish the token exchange once the app is visible again.
-                    awaitForeground()
-                    val tokens = withNetworkRetry { oauth.exchange(pending, q["code"]!!, q["client_id"]) }
+                    // Remember the issued client right away so a retry does not register another app.
+                    q["client_id"]?.takeIf { it.isNotBlank() && it != ChatGptOAuth.DYNAMIC_CLIENT }?.let { prefs.chatGptIssuedClientId = it }
+                    // Authorization codes are short-lived: redeem immediately. Only if the phone
+                    // blocks background network (data saver etc.) wait until the app is visible.
+                    var responded = false
+                    val tokens = try {
+                        oauth.exchange(pending, q["code"]!!, q["client_id"])
+                    } catch (e: java.io.IOException) {
+                        responded = true
+                        respond(s, 200, page("Fast geschafft ✓", "Zurück zur Chess-AI-App – die Anmeldung wird dort abgeschlossen.", redirect = true))
+                        awaitForeground()
+                        withNetworkRetry { oauth.exchange(pending, q["code"]!!, q["client_id"]) }
+                    } catch (e: Exception) {
+                        respond(s, 200, page("Anmeldung fehlgeschlagen", e.message ?: "Fehler"))
+                        throw e
+                    }
+                    if (!responded) respond(s, 200, page("Angemeldet ✓", "Du kannst jetzt zur Chess-AI-App zurückkehren.", redirect = true))
                     prefs.chatGptTokens = tokens
                     prefs.chatGptIssuedClientId = tokens.clientId
                     // pick a model this plan offers (prefer a small, cheap one)
