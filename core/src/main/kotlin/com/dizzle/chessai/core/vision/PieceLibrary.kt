@@ -72,6 +72,8 @@ object SquareFeatures {
             if ((cx < CORNER || cx >= n - CORNER) && (cy < CORNER || cy >= n - CORNER)) continue
             val c = rgb[i]
             val r = (c shr 16) and 255; val g = (c shr 8) and 255; val b = c and 255
+            // Strongly red pixels are the "king in check" glow apps draw, not part of a piece.
+            if (r - max(g, b) > RED_TINT) continue
             val d = abs(r - bg[0]) + abs(g - bg[1]) + abs(b - bg[2])
             if (d > threshold) {
                 val luma = (r * 299 + g * 587 + b * 114) / 1000
@@ -83,6 +85,8 @@ object SquareFeatures {
     }
 
     const val FG_THRESHOLD = 28
+    /** Pixels whose red channel exceeds green and blue by more than this are highlight tint. */
+    private const val RED_TINT = 38
     /** Size (in grid cells) of the corner areas that are ignored because of coordinate labels. */
     private const val CORNER = 5
 

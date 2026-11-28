@@ -280,12 +280,16 @@ class Analyzer(
             root.unmake()
         }
         val bb = bestBoard ?: return null
+        val candidate = prev.copy().also { p -> for (m in bestPath) p.make(m) }
+        // Apps highlight a king in check (red glow etc.) – be lenient on that square.
+        val checkedKing = if (candidate.inCheck()) candidate.kingSquare(candidate.stm) else -1
         // quality checks
         var worst = 0f
         for (sq in 0 until 64) {
             val label = bb[sq]
             if (label != 0 && label !in known) continue
-            worst = maxOf(worst, d[sq][label + 6])
+            val dist = d[sq][label + 6]
+            worst = maxOf(worst, if (sq == checkedKing) dist * 0.5f else dist)
         }
         if (worst > TRACK_SQUARE_MAX) return null
         if (best / 64 > TRACK_AVG_MAX) return null
