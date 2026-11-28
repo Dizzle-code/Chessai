@@ -143,6 +143,21 @@ object BoardLocator {
             if (sc > best) { best = sc; mx = sx; my = sy; ms = ss }
         }
         if (best < 15) return null
+        // The grid may lock on one square off (e.g. when the background matches a square colour).
+        // Prefer the shift where the checker pattern does NOT continue outside the 8x8 grid.
+        run {
+            val q = ms / 8
+            var bestTotal = best - continuation(medium, mx, my, ms, tmp)
+            var bx2 = mx; var by2 = my
+            for (dy in -1..1) for (dx in -1..1) {
+                if (dx == 0 && dy == 0) continue
+                val sx = mx + dx * q; val sy = my + dy * q
+                if (sx < -0.5 || sy < -0.5 || sx + ms > medium.w + 0.5 || sy + ms > medium.h + 0.5) continue
+                val total = score(medium, sx, sy, ms, tmp, true) - continuation(medium, sx, sy, ms, tmp)
+                if (total > bestTotal + 3) { bestTotal = total; bx2 = sx; by2 = sy }
+            }
+            mx = bx2; my = by2
+        }
         val rough = BoardRect((mx * fm).roundToInt(), (my * fm).roundToInt(), (ms * fm).roundToInt())
         return Located(refineEdges(img, rough, (fm * 3).roundToInt() + 3), best)
     }
@@ -206,6 +221,52 @@ object BoardLocator {
         val medium = Raster.downscale(img, MEDIUM_W)
         val f = img.width.toDouble() / medium.w
         return score(medium, rect.x / f, rect.y / f, rect.size / f, IntArray(64 * 3 * 2), true)
+    }
+
+    /**
+     * How strongly the checker pattern continues in the four bands just outside the grid
+     * (0 = not at all). A correctly placed grid has no continuation on any side.
+     */
+    private fun continuation(r: Raster, x: Double, y: Double, s: Double, tmp: IntArray): Double {
+        val q = s / 8
+        var total = 0.0
+        val c4 = IntArray(12)
+        for (side in 0 until 4) {
+            val cols = IntArray(8); val rows = IntArray(8)
+            for (i in 0 until 8) {
+                when (side) {
+                    0 -> { cols[i] = i; rows[i] = -1 }
+                    1 -> { cols[i] = i; rows[i] = 8 }
+                    2 -> { cols[i] = -1; rows[i] = i }
+                    else -> { cols[i] = 8; rows[i] = i }
+                }
+            }
+            // band must lie inside the image
+            val bx0 = x + cols[0] * q; val by0 = y + rows[0] * q
+            val bx1 = x + (cols[7] + 1) * q; val by1 = y + (rows[7] + 1) * q
+            if (bx0 < 0 || by0 < 0 || bx1 > r.w || by1 > r.h) continue
+            val me = DoubleArray(3); val mo = DoubleArray(3)
+            val col = IntArray(8 * 3)
+            for (i in 0 until 8) {
+                for (k in 0 until 4) patch(r, x, y, q, cols[i], rows[i], k, c4, k * 3)
+                for (ch in 0 until 3) {
+                    val v = intArrayOf(c4[ch], c4[3 + ch], c4[6 + ch], c4[9 + ch]).sorted()
+                    col[i * 3 + ch] = (v[1] + v[2]) / 2
+                }
+                val even = ((cols[i] + rows[i]) and 1) == 0
+                for (ch in 0 until 3) { if (even) me[ch] += col[i * 3 + ch] / 4.0 else mo[ch] += col[i * 3 + ch] / 4.0 }
+            }
+            var dev = 0.0
+            for (i in 0 until 8) {
+                val even = ((cols[i] + rows[i]) and 1) == 0
+                val m = if (even) me else mo
+                for (ch in 0 until 3) dev += abs(col[i * 3 + ch] - m[ch])
+            }
+            dev /= 8
+            val contrast = abs(me[0] - mo[0]) + abs(me[1] - mo[1]) + abs(me[2] - mo[2])
+            total += max(0.0, contrast - 2 * dev)
+        }
+        return total
     }
 
     /** Cheap pre-filter: 4 squares per row on two rows. */
