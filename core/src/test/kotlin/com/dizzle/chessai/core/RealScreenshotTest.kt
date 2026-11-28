@@ -59,3 +59,26 @@ class RealScreenshotTest {
         assertEquals("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR", r3.fen!!.substringBefore(' '))
     }
 }
+
+/** Dark theme, board flipped (user plays black), white already played 1. e4 – learned without AI. */
+class DarkThemeScreenshotTest {
+    @Test fun flippedDarkBoardAfterFirstMove() {
+        val bi = ImageIO.read(javaClass.getResourceAsStream("/dark_e4_flipped.png"))
+        val px = IntArray(bi.width * bi.height)
+        bi.getRGB(0, 0, bi.width, bi.height, px, 0, bi.width)
+        val img = RgbImage(bi.width, bi.height, px)
+        val a = Analyzer(PieceLibrary()) { _, _, _ -> ByteArray(0) }
+        val r = a.analyze(img, Analyzer.Options(engine = SimpleEngine(16), thinkMs = 200))
+        assertTrue(r.ok, r.message)
+        assertEquals(Analyzer.Source.START, r.source)
+        assertEquals("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR", r.fen!!.substringBefore(' '))
+        assertEquals("b", r.fen!!.split(' ')[1])
+        assertEquals(false, a.whiteBottom)
+        assertTrue(r.myTurn, "black (bottom) is to move")
+        assertTrue(r.fromVisual >= 48, "suggested move starts from black's side at the bottom: ${r.message}")
+        // pieces of this design are learned now: the position is also recognised by classification
+        a.resetGame()
+        val r2 = a.analyze(img, Analyzer.Options(myColor = -1, engine = SimpleEngine(16), thinkMs = 200))
+        assertEquals(Analyzer.Source.LOCAL, r2.source, r2.message)
+    }
+}

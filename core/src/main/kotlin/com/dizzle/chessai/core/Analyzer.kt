@@ -140,10 +140,13 @@ class Analyzer(
 
         // 3: start position (needs no templates)
         if (pos == null && !opt.forceAi) {
-            detectStart(feats, opt.myColor)?.let { wb ->
-                val p = Position.start()
-                pos = p; whiteBottom = wb; source = Source.START
-                library.learn(feats, toVisual(p, wb))
+            // initial position or one of the first moves (learns the piece design without AI)
+            val orientation = if (opt.myColor != 0) opt.myColor > 0 else null
+            val opening = detectStart(feats, opt.myColor)?.let { Openings.Match(Position.start(), it) }
+                ?: Openings.signatureOf(feats)?.let { Openings.match(it, orientation) }
+            opening?.let { m ->
+                pos = m.position; whiteBottom = m.whiteBottom; source = Source.START
+                library.learn(feats, toVisual(m.position, m.whiteBottom))
             }
         }
 

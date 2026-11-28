@@ -110,6 +110,7 @@ class OverlayService : Service() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         prefs = Prefs(this)
         analyzer = Analyzer(PieceStore.load(this), ::encodeBoardJpeg)
+        worker.execute { runCatching { com.dizzle.chessai.core.Openings.warmUp() } }
         autoMode = prefs.autoMode
     }
 
