@@ -666,8 +666,11 @@ class MainActivity : Activity() {
             setPadding(dp(4), dp(10), dp(6), dp(12))
         }
         box.addView(title(theme.t(label), (theme.label - 1).coerceAtLeast(7f), theme.muted))
-        val value = body("", theme.body + 2).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, 0); maxLines = 1 }
-        box.addView(value)
+        val value = body("", theme.body + 2).apply {
+            gravity = Gravity.CENTER; setPadding(0, dp(4), 0, 0); maxLines = 1
+            setAutoSizeTextTypeUniformWithConfiguration(9, (theme.body + 2).toInt(), 1, TypedValue.COMPLEX_UNIT_SP)
+        }
+        box.addView(value, LinearLayout.LayoutParams(-1, dp(30)))
         parent.addView(box, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             if (parent.childCount > 0) leftMargin = dp(8)
         })

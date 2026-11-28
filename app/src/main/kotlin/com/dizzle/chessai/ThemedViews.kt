@@ -114,8 +114,11 @@ class ThemePreview(ctx: Context, private val theme: UiTheme) : View(ctx) {
         panel.setBounds((h * 0.1f).toInt(), (h * 0.14f).toInt(), (bx - h * 0.1f).toInt(), (h * 0.86f).toInt())
         panel.draw(c)
         val tl = h * 0.1f + 14 * d
-        p.color = theme.text; p.textAlign = Paint.Align.LEFT; p.typeface = theme.titleFont(context); p.textSize = 11 * d
-        c.drawText(theme.t("Chess AI"), tl, h * 0.34f, p)
+        // accent dot + title bar instead of text (text would not fit next to the mini board)
+        p.color = theme.accent
+        c.drawCircle(tl + 5 * d, h * 0.3f, 5 * d, p)
+        p.color = theme.text
+        c.drawRoundRect(RectF(tl + 14 * d, h * 0.3f - 3 * d, bx - h * 0.1f - 14 * d, h * 0.3f + 3 * d), 3 * d, 3 * d, p)
         p.color = theme.muted
         val lineW = bx - h * 0.1f - tl - 18 * d
         c.drawRoundRect(RectF(tl, h * 0.46f, tl + lineW, h * 0.46f + 4 * d), 2 * d, 2 * d, p)
