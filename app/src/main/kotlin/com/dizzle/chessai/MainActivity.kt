@@ -3,9 +3,7 @@ package com.dizzle.chessai
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.Drawable
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
@@ -14,41 +12,38 @@ import android.provider.Settings
 import android.text.Editable
 import android.text.InputType
 import android.text.TextWatcher
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.RadioButton
-import android.widget.RadioGroup
 import android.widget.ScrollView
-import android.widget.SeekBar
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 
-/** Settings screen + start button. Built in code to keep the app small and dependency-free. */
+/** Settings screen + start button in a pixel-art chess style. Built in code, no UI libraries. */
 class MainActivity : Activity() {
     private lateinit var prefs: Prefs
     private lateinit var root: LinearLayout
-    private lateinit var startButton: Button
-    private lateinit var status: TextView
-    private lateinit var claudeBox: LinearLayout
-    private lateinit var openAiBox: LinearLayout
-    private lateinit var advancedBox: LinearLayout
+    private lateinit var startButton: TextView
+    private lateinit var statusLabel: TextView
+    private lateinit var statusLight: View
+    private lateinit var statEngine: TextView
+    private lateinit var statTokens: TextView
+    private lateinit var statLocal: TextView
+    private lateinit var providerHint: TextView
     private lateinit var loginBox: LinearLayout
     private lateinit var loginStatus: TextView
-    private lateinit var loginButton: Button
-    private var advancedRadios: List<RadioButton> = emptyList()
+    private lateinit var loginButton: TextView
+    private lateinit var apiBox: LinearLayout
+    private lateinit var claudeBox: LinearLayout
+    private lateinit var openAiBox: LinearLayout
+    private var providerTiles: List<TextView> = emptyList()
+    private var apiTiles: List<TextView> = emptyList()
 
     companion object {
         private const val REQ_CAPTURE = 42
-        private const val TEXT = Color.WHITE
-        private const val MUTED = 0xFFB0B4BC.toInt()
-        private const val CARD = 0xFF23262E.toInt()
-        private const val ACCENT = 0xFF1E88E5.toInt()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,144 +83,183 @@ class MainActivity : Activity() {
         Thread.sleep(400) // let the network policy switch to foreground
     }
 
-    private fun dp(v: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v.toFloat(), resources.displayMetrics).toInt()
+    private fun dp(v: Number) = dpi(v)
+
+    // ------------------------------------------------------------------ layout
 
     private fun buildUi() {
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(28), dp(18), dp(28))
+            setPadding(dp(16), dp(22), dp(16), dp(28))
         }
-        setContentView(ScrollView(this).apply { addView(root) })
-
-        root.addView(TextView(this).apply {
-            text = "♞ Chess AI"
-            textSize = 30f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(TEXT)
+        setContentView(ScrollView(this).apply {
+            setBackgroundColor(Pal.BG)
+            isVerticalScrollBarEnabled = false
+            addView(root)
         })
-        root.addView(muted("Erkennt das Schachbrett auf deinem Bildschirm und zeigt den besten Zug als leuchtende Punkte an – ohne ihn auszuführen."))
 
-        // ---- start / stop
-        startButton = Button(this).apply {
-            textSize = 18f
-            isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { setColor(ACCENT); cornerRadius = dp(14).toFloat() }
-            setOnClickListener { if (OverlayService.running) stopOverlay() else startOverlay() }
+        // ---- header
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(View(this).apply { background = Sprites.knight() }, LinearLayout.LayoutParams(dp(56), dp(56)))
+        val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
+        titles.addView(title("CHESS AI", 20f, Pal.CREAM))
+        titles.addView(body("Dein Pixel-Zugberater fürs Schachbrett", Pal.MUTED, 19f).apply { setPadding(0, dp(6), 0, 0) })
+        header.addView(titles)
+        root.addView(header)
+        root.addView(CheckerStrip(this), lp(top = 16))
+
+        // ---- status / start
+        val status = panel(Pal.PANEL)
+        val statusRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        statusLight = View(this)
+        statusRow.addView(statusLight, LinearLayout.LayoutParams(dp(12), dp(12)))
+        statusLabel = title("", 11f, Pal.CREAM).apply { setPadding(dp(10), 0, 0, 0) }
+        statusRow.addView(statusLabel)
+        status.addView(statusRow)
+        startButton = pixelButton("", Pal.MOSS, Pal.INK, 14f) {
+            if (OverlayService.running) stopOverlay() else startOverlay()
         }
-        root.addView(startButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(58)).apply { topMargin = dp(18) })
-        status = muted("")
-        root.addView(status)
+        status.addView(startButton, lp(top = 14, height = 64))
+        val stats = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        statEngine = statChip(stats, "ENGINE")
+        statTokens = statChip(stats, "TOKENS")
+        statLocal = statChip(stats, "LOKAL")
+        status.addView(stats, lp(top = 14))
 
-        // ---- AI provider
-        val ai = card("Bilderkennung (nur wenn nötig)")
-        ai.addView(muted("Die App erkennt Figuren lokal und verfolgt die Partie selbst (0 Tokens). Die AI wird nur gefragt, wenn sie ein Figuren-Design zum ersten Mal sieht – meist 1× pro Design."))
-        val group = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
-        group.addView(radio("ChatGPT – mit deinem Abo anmelden", 4))
-        group.addView(radio("Keine AI – nur lokal (ab Grundstellung)", 3))
-        advancedRadios = listOf(radio("Claude (Anthropic API-Key)", 1), radio("OpenAI API-Key", 2))
-        advancedRadios.forEach { group.addView(it) }
-        group.check(when (prefs.provider) { AiProvider.CHATGPT_LOGIN -> 4; AiProvider.CLAUDE -> 1; AiProvider.OPENAI -> 2; AiProvider.NONE -> 3 })
-        ai.addView(group)
+        // ---- recognition
+        val rec = section("ERKENNUNG")
+        rec.addView(body("Figuren werden lokal erkannt und die Partie wird mitverfolgt – 0 Tokens. AI nur als Joker, wenn ein Figuren-Design neu ist.", Pal.MUTED))
+        val tiles = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        providerTiles = listOf("LOKAL", "CHATGPT", "API-KEY").mapIndexed { i, t ->
+            tile(tiles, t) { selectProvider(i) }
+        }
+        rec.addView(tiles, lp(top = 12))
+        providerHint = body("", Pal.CREAM).apply { setPadding(0, dp(10), 0, 0) }
+        rec.addView(providerHint)
 
-        // ChatGPT login
         loginBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        loginStatus = label("")
+        loginStatus = body("", Pal.CREAM)
         loginBox.addView(loginStatus)
-        loginButton = Button(this).apply {
-            isAllCaps = false
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply { setColor(0xFF10A37F.toInt()); cornerRadius = dp(12).toFloat() }
-            setOnClickListener { if (prefs.chatGptTokens != null) logoutChatGpt() else loginChatGpt() }
+        loginButton = pixelButton("", Pal.GOLD, Pal.INK, 11f) {
+            if (prefs.chatGptTokens != null) logoutChatGpt() else loginChatGpt()
         }
-        loginBox.addView(loginButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(50)).apply { topMargin = dp(6) })
-        loginBox.addView(muted("Die Anfragen laufen über dein ChatGPT-Plus/Pro-Kontingent – kein API-Key nötig. Login-Daten werden verschlüsselt im Android-Keystore gespeichert."))
-        ai.addView(loginBox)
+        loginBox.addView(loginButton, lp(top = 8, height = 52))
+        rec.addView(loginBox, lp(top = 6))
 
-        ai.addView(muted("Claude: Anthropic erlaubt den Login mit einem Claude-Pro/Max-Abo nur in den eigenen Apps (Claude, Claude Code) – fremde Apps dürfen ihn nicht nutzen. Für Claude bleibt daher nur ein API-Key (unter „Erweitert“)."))
-
-        // advanced: API keys + client id
-        advancedBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        apiBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val apiRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        apiTiles = listOf("CLAUDE", "OPENAI").mapIndexed { i, t ->
+            tile(apiRow, t, small = true) {
+                prefs.provider = if (i == 0) AiProvider.CLAUDE else AiProvider.OPENAI
+                updateProviderUi()
+            }
+        }
+        apiBox.addView(apiRow, lp(top = 8))
         claudeBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        claudeBox.addView(field("Anthropic API-Key (sk-ant-…)", prefs.claudeKey, secret = true) { prefs.claudeKey = it })
-        claudeBox.addView(linkButton("API-Key bei Anthropic erstellen", "https://console.anthropic.com/settings/keys"))
-        claudeBox.addView(field("Claude-Modell", prefs.claudeModel, secret = false) { prefs.claudeModel = it })
-        claudeBox.addView(muted("Tipp: „claude-haiku-5-5“ ist deutlich günstiger und reicht für Brett-Erkennung meist aus."))
-        advancedBox.addView(claudeBox)
+        claudeBox.addView(fieldLabel("ANTHROPIC API-KEY"))
+        claudeBox.addView(field("sk-ant-…", prefs.claudeKey, secret = true) { prefs.claudeKey = it })
+        claudeBox.addView(link("> Key bei Anthropic erstellen", "https://console.anthropic.com/settings/keys"))
+        claudeBox.addView(fieldLabel("MODELL"))
+        claudeBox.addView(field("claude-opus-5-5", prefs.claudeModel, secret = false) { prefs.claudeModel = it })
+        claudeBox.addView(body("Tipp: claude-haiku-5-5 ist günstiger und reicht meist.", Pal.MUTED, 17f))
+        apiBox.addView(claudeBox)
         openAiBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        openAiBox.addView(field("OpenAI API-Key (sk-…)", prefs.openAiKey, secret = true) { prefs.openAiKey = it })
-        openAiBox.addView(linkButton("API-Key bei OpenAI erstellen", "https://platform.openai.com/api-keys"))
-        advancedBox.addView(openAiBox)
-        advancedBox.addView(field("OpenAI-Modell (Login & API-Key)", prefs.openAiModel, secret = false) { prefs.openAiModel = it })
-        val advToggle = switch("Erweitert (API-Keys, Modell)", prefs.showAdvanced) {
-            prefs.showAdvanced = it; updateProviderBoxes()
-        }
-        ai.addView(advToggle)
-        ai.addView(advancedBox)
-
-        group.setOnCheckedChangeListener { _, id ->
-            prefs.provider = when (id) { 4 -> AiProvider.CHATGPT_LOGIN; 1 -> AiProvider.CLAUDE; 2 -> AiProvider.OPENAI; else -> AiProvider.NONE }
-            updateProviderBoxes()
-        }
-        updateProviderBoxes()
+        openAiBox.addView(fieldLabel("OPENAI API-KEY"))
+        openAiBox.addView(field("sk-…", prefs.openAiKey, secret = true) { prefs.openAiKey = it })
+        openAiBox.addView(link("> Key bei OpenAI erstellen", "https://platform.openai.com/api-keys"))
+        openAiBox.addView(fieldLabel("MODELL"))
+        openAiBox.addView(field("gpt-5-mini", prefs.openAiModel, secret = false) { prefs.openAiModel = it })
+        apiBox.addView(openAiBox)
+        apiBox.addView(body("Claude-Abo-Login ist für fremde Apps nicht erlaubt – für Claude geht nur ein API-Key.", Pal.MUTED, 17f).apply {
+            setPadding(0, dp(8), 0, 0)
+        })
+        rec.addView(apiBox)
+        updateProviderUi()
         refreshLogin()
 
-        // ---- game settings
-        val game = card("Spiel")
-        game.addView(label("Ich spiele"))
-        val color = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL }
-        color.addView(radio("Auto (unten)", 10)); color.addView(radio("Weiß", 11)); color.addView(radio("Schwarz", 12))
-        color.check(when (prefs.myColor) { 1 -> 11; -1 -> 12; else -> 10 })
-        color.setOnCheckedChangeListener { _, id -> prefs.myColor = when (id) { 11 -> 1; 12 -> -1; else -> 0 } }
-        game.addView(color)
-
-        val thinkLabel = label("")
-        fun setThinkLabel(ms: Long) { thinkLabel.text = "Bedenkzeit der Engine: ${"%.1f".format(ms / 1000.0)} s" }
-        setThinkLabel(prefs.thinkMs)
-        game.addView(thinkLabel)
-        game.addView(SeekBar(this).apply {
-            max = 48 // 0.2 s .. 5.0 s in 0.1 s steps
-            progress = ((prefs.thinkMs - 200) / 100).toInt().coerceIn(0, 48)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
-                    val ms = 200L + p * 100L
-                    prefs.thinkMs = ms; setThinkLabel(ms)
+        // ---- game
+        val game = section("SPIEL")
+        game.addView(fieldLabel("ICH SPIELE"))
+        val colors = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val colorValues = listOf(0, 1, -1)
+        val colorTiles = ArrayList<TextView>()
+        listOf("AUTO" to Sprites.autoPawn(), "WEISS" to Sprites.whitePawn(), "SCHWARZ" to Sprites.blackPawn())
+            .forEachIndexed { i, (t, icon) ->
+                colorTiles += tile(colors, t, small = true, icon = icon) {
+                    prefs.myColor = colorValues[i]
+                    colorTiles.forEachIndexed { j, v -> styleTile(v, j == i) }
                 }
-                override fun onStartTrackingTouch(s: SeekBar?) {}
-                override fun onStopTrackingTouch(s: SeekBar?) {}
-            })
-        })
-        game.addView(switch("Stockfish verwenden (falls enthalten)", prefs.useStockfish) { prefs.useStockfish = it })
-        game.addView(switch("Dauer-Scan: bester Zug erscheint automatisch, sobald du dran bist", prefs.autoMode) { prefs.autoMode = it })
+            }
+        colorTiles.forEachIndexed { j, v -> styleTile(v, colorValues[j] == prefs.myColor) }
+        game.addView(colors, lp(top = 6))
+        game.addView(body("Auto = die Farbe, die unten auf dem Brett steht.", Pal.MUTED, 17f).apply { setPadding(0, dp(6), 0, 0) })
 
-        // ---- help
-        val help = card("So geht's")
-        help.addView(muted(
-            "1. Overlay starten und Bildschirmaufnahme erlauben.\n" +
-                "2. Schach-App öffnen. Den ♞-Button an eine freie Stelle ziehen.\n" +
-                "3. Dauer-Scan (Standard): Sobald du am Zug bist, erscheint der beste Zug von selbst – Cyan = Figur, Gelb = Zielfeld. Am besten eine Partie aus der Grundstellung starten, dann lernt die App die Figuren ohne AI.\n" +
-                "4. ♞ antippen = sofort neu analysieren. Lange drücken = Menü (Dauer-Scan an/aus, Brett manuell festlegen, AI neu einlesen, Neue Partie).\n\n" +
-                "Fairplay: Auf Online-Plattformen gegen Menschen ist Engine-Hilfe verboten und führt zur Sperre. " +
-                "Nutze die App zum Lernen, für Analysen und gegen Computer-Gegner."
-        ))
+        val thinkLabel = fieldLabel("")
+        fun setThink(ms: Long) { thinkLabel.text = "BEDENKZEIT  ${"%.1f".format(ms / 1000.0)} S" }
+        setThink(prefs.thinkMs)
+        game.addView(thinkLabel, lp(top = 10))
+        game.addView(PixelSlider(this, 48, ((prefs.thinkMs - 200) / 100).toInt()) { p ->
+            val ms = 200L + p * 100L
+            prefs.thinkMs = ms; setThink(ms)
+        }, lp(top = 6))
+        game.addView(toggleRow("DAUER-SCAN", "Bester Zug erscheint automatisch, sobald du dran bist", prefs.autoMode) { prefs.autoMode = it }, lp(top = 14))
+        game.addView(toggleRow("STOCKFISH", "Starke Engine nutzen (sonst eingebaute Engine)", prefs.useStockfish) { prefs.useStockfish = it }, lp(top = 10))
+
+        // ---- how to
+        val how = section("SO GEHT'S")
+        listOf(
+            "START antippen und den ganzen Bildschirm freigeben.",
+            "Schach-App öffnen, den Springer-Button neben das Brett ziehen.",
+            "Partie aus der Grundstellung starten – die App lernt die Figuren ohne AI.",
+            "Cyan = Figur, Gold = Zielfeld. Antippen = neu scannen, lange drücken = Menü.",
+        ).forEachIndexed { i, t -> how.addView(step(i + 1, t), lp(top = if (i == 0) 4 else 10)) }
+
+        // ---- footer
+        root.addView(CheckerStrip(this), lp(top = 22))
+        root.addView(body("Fairplay: In Online-Partien gegen Menschen ist Engine-Hilfe verboten. Nutze die App zum Lernen, für Analysen und gegen Computer-Gegner.", Pal.MUTED, 17f), lp(top = 12))
+        root.addView(body("Schriften: Press Start 2P & VT323 (SIL Open Font License). Engine: Stockfish (GPLv3).", Pal.SLATE, 15f), lp(top = 8))
     }
 
-    private fun updateProviderBoxes() {
-        val adv = prefs.showAdvanced || prefs.provider == AiProvider.CLAUDE || prefs.provider == AiProvider.OPENAI
-        advancedBox.visibility = if (adv) View.VISIBLE else View.GONE
-        advancedRadios.forEach { it.visibility = if (adv) View.VISIBLE else View.GONE }
+    // ------------------------------------------------------------------ provider selection
+
+    private fun providerIndex() = when (prefs.provider) {
+        AiProvider.NONE -> 0
+        AiProvider.CHATGPT_LOGIN -> 1
+        AiProvider.CLAUDE, AiProvider.OPENAI -> 2
+    }
+
+    private fun selectProvider(i: Int) {
+        prefs.provider = when (i) {
+            0 -> AiProvider.NONE
+            1 -> AiProvider.CHATGPT_LOGIN
+            else -> if (prefs.provider == AiProvider.OPENAI) AiProvider.OPENAI else AiProvider.CLAUDE
+        }
+        updateProviderUi()
+    }
+
+    private fun updateProviderUi() {
+        val idx = providerIndex()
+        providerTiles.forEachIndexed { i, v -> styleTile(v, i == idx) }
+        providerHint.text = when (idx) {
+            0 -> "Komplett offline. Starte eine Partie aus der Grundstellung – danach erkennt die App auch spätere Stellungen im gleichen Design."
+            1 -> "Nutzt dein ChatGPT-Abo (Go, Plus, Pro oder Business). Ohne Abo bitte LOKAL wählen."
+            else -> "Eigener API-Key. Kostet meist nur Bruchteile eines Cents pro Figuren-Design."
+        }
+        loginBox.visibility = if (idx == 1) View.VISIBLE else View.GONE
+        apiBox.visibility = if (idx == 2) View.VISIBLE else View.GONE
+        apiTiles.forEachIndexed { i, v -> styleTile(v, (i == 0) == (prefs.provider == AiProvider.CLAUDE)) }
         claudeBox.visibility = if (prefs.provider == AiProvider.CLAUDE) View.VISIBLE else View.GONE
         openAiBox.visibility = if (prefs.provider == AiProvider.OPENAI) View.VISIBLE else View.GONE
-        loginBox.visibility = if (prefs.provider == AiProvider.CHATGPT_LOGIN) View.VISIBLE else View.GONE
     }
+
+    // ------------------------------------------------------------------ ChatGPT login
 
     private fun refreshLogin() {
         val t = prefs.chatGptTokens
         when {
-            loginRunning -> { loginStatus.text = "Anmeldung läuft …"; loginButton.text = "Bitte im Browser bestätigen" }
-            t != null -> { loginStatus.text = "✓ Angemeldet" + (t.email?.let { " als $it" } ?: ""); loginButton.text = "Abmelden" }
-            else -> { loginStatus.text = "Nicht angemeldet"; loginButton.text = "Mit ChatGPT anmelden" }
+            loginRunning -> { loginStatus.text = "Anmeldung läuft …"; loginButton.text = "IM BROWSER BESTÄTIGEN" }
+            t != null -> { loginStatus.text = "Angemeldet" + (t.email?.let { " als $it" } ?: "") + " · Modell ${prefs.openAiModel}"; loginButton.text = "ABMELDEN" }
+            else -> { loginStatus.text = "Nicht angemeldet"; loginButton.text = "MIT CHATGPT ANMELDEN" }
         }
     }
 
@@ -247,7 +281,7 @@ class MainActivity : Activity() {
                 loginRunning = false
                 refreshLogin()
                 result.exceptionOrNull()?.let { showError("ChatGPT-Login fehlgeschlagen", it.message ?: it.javaClass.simpleName) }
-                        ?: Toast.makeText(this, "Mit ChatGPT angemeldet · Modell: ${prefs.openAiModel}", Toast.LENGTH_SHORT).show()
+                    ?: Toast.makeText(this, "Mit ChatGPT angemeldet · Modell: ${prefs.openAiModel}", Toast.LENGTH_SHORT).show()
             }
         }.start()
     }
@@ -282,9 +316,14 @@ class MainActivity : Activity() {
     }
 
     private fun refreshStatus() {
-        startButton.text = if (OverlayService.running) "■  Overlay stoppen" else "▶  Overlay starten"
-        val engine = if (Engines.stockfishBinary(this) != null) "Stockfish (eingebaut)" else "integrierte Engine"
-        status.text = "Engine: $engine · AI-Aufrufe: ${prefs.aiCalls} · Tokens gesamt: ${prefs.totalTokens} · lokal erkannt: ${prefs.localHits}×"
+        val on = OverlayService.running
+        startButton.text = if (on) "STOP" else "START"
+        (startButton.background as? PixelBox)?.let { it.fill = if (on) Pal.CORAL else Pal.MOSS; it.invalidateSelf() }
+        statusLabel.text = if (on) "OVERLAY AKTIV" else "OVERLAY AUS"
+        statusLight.background = PixelBox(if (on) Pal.MOSS else Pal.CORAL, Pal.INK, dpf(2f), shadow = 0, shadowSteps = 0)
+        statEngine.text = if (Engines.stockfishBinary(this) != null) "Stockfish" else "Eingebaut"
+        statTokens.text = "${prefs.totalTokens}"
+        statLocal.text = "${prefs.localHits}x"
     }
 
     // ------------------------------------------------------------------ start / stop
@@ -299,14 +338,14 @@ class MainActivity : Activity() {
             prefs.provider == AiProvider.CLAUDE && prefs.claudeKey.isBlank() ||
             prefs.provider == AiProvider.OPENAI && prefs.openAiKey.isBlank()
         ) {
-            Toast.makeText(this, "Keine AI verbunden – es wird nur lokal erkannt (Startstellung / gelernte Figuren)", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Keine AI verbunden – es wird nur lokal erkannt", Toast.LENGTH_LONG).show()
         }
         val mpm = getSystemService(MediaProjectionManager::class.java)!!
-        @Suppress("DEPRECATION")
         // Android 14+: only offer "entire screen" – sharing a single app would hide the chess app.
         val intent = if (Build.VERSION.SDK_INT >= 34) {
             mpm.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())
         } else mpm.createScreenCaptureIntent()
+        @Suppress("DEPRECATION")
         startActivityForResult(intent, REQ_CAPTURE)
     }
 
@@ -332,46 +371,130 @@ class MainActivity : Activity() {
         startButton.postDelayed({ refreshStatus(); moveTaskToBack(true) }, 600)
     }
 
-    // ------------------------------------------------------------------ small UI helpers
+    // ------------------------------------------------------------------ pixel widgets
 
-    private fun card(title: String): LinearLayout {
-        val c = LinearLayout(this).apply {
+    private fun lp(top: Int = 0, height: Int = 0) = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        if (height > 0) dp(height) else ViewGroup.LayoutParams.WRAP_CONTENT,
+    ).apply { topMargin = dp(top) }
+
+    private fun title(t: String, size: Float, color: Int) = TextView(this).apply {
+        text = t; textSize = size; setTextColor(color); typeface = PixelFonts.title(this@MainActivity)
+        includeFontPadding = false
+    }
+
+    private fun body(t: String, color: Int, size: Float = 19f) = TextView(this).apply {
+        text = t; textSize = size; setTextColor(color); typeface = PixelFonts.body(this@MainActivity)
+        setLineSpacing(0f, 0.95f)
+    }
+
+    private fun fieldLabel(t: String) = title(t, 9f, Pal.GOLD).apply { setPadding(0, dp(12), 0, dp(4)) }
+
+    private fun panel(fill: Int): LinearLayout {
+        val p = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            background = GradientDrawable().apply { setColor(CARD); cornerRadius = dp(16).toFloat() }
+            background = PixelBox(fill, Pal.INK, dpf(3f), shadowSteps = 2)
+            setPadding(dp(16), dp(16), dp(22), dp(22))
         }
-        c.addView(TextView(this).apply {
-            text = title; textSize = 17f; setTextColor(TEXT); setTypeface(typeface, Typeface.BOLD)
+        root.addView(p, lp(top = 18))
+        return p
+    }
+
+    private fun section(name: String): LinearLayout {
+        val p = panel(Pal.PANEL)
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(View(this).apply { background = PixelBox(Pal.GOLD, Pal.INK, dpf(1.5f), shadow = 0, shadowSteps = 0) },
+            LinearLayout.LayoutParams(dp(10), dp(10)))
+        head.addView(title(name, 12f, Pal.CREAM).apply { setPadding(dp(10), 0, 0, 0) })
+        p.addView(head)
+        p.addView(View(this).apply { setBackgroundColor(Pal.SLATE) }, lp(top = 10, height = 2).apply { height = dpi(2) })
+        return p
+    }
+
+    private fun pixelButton(t: String, fill: Int, textColor: Int, size: Float, onClick: () -> Unit) = TextView(this).apply {
+        text = t
+        gravity = Gravity.CENTER
+        textSize = size
+        setTextColor(textColor)
+        typeface = PixelFonts.title(this@MainActivity)
+        background = PixelBox(fill, Pal.INK, dpf(3f), shadowSteps = 2)
+        setPadding(dp(8), 0, dp(14), dp(6))
+        isClickable = true
+        setOnClickListener { onClick() }
+    }
+
+    private fun tile(parent: LinearLayout, t: String, small: Boolean = false, icon: Drawable? = null, onClick: () -> Unit): TextView {
+        val v = TextView(this).apply {
+            text = t
+            gravity = Gravity.CENTER
+            textSize = if (small) 8.5f else 9.5f
+            typeface = PixelFonts.title(this@MainActivity)
+            setPadding(dp(4), dp(10), dp(8), dp(14))
+            isClickable = true
+            if (icon != null) {
+                icon.setBounds(0, 0, dp(22), dp(22))
+                setCompoundDrawables(null, icon, null, null)
+                compoundDrawablePadding = dp(6)
+            }
+            setOnClickListener { onClick() }
+        }
+        parent.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            if (parent.childCount > 0) leftMargin = dp(8)
         })
-        root.addView(c, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) })
-        return c
+        return v
     }
 
-    private fun muted(t: String) = TextView(this).apply {
-        text = t; textSize = 13.5f; setTextColor(MUTED); setPadding(0, dp(6), 0, dp(6))
+    private fun styleTile(v: TextView, selected: Boolean) {
+        v.background = PixelBox(if (selected) Pal.MOSS else Pal.PANEL_HI, if (selected) Pal.GOLD else Pal.INK, dpf(2.5f), shadowSteps = 2)
+        v.setTextColor(if (selected) Pal.INK else Pal.MUTED)
     }
 
-    private fun label(t: String) = TextView(this).apply {
-        text = t; textSize = 14.5f; setTextColor(TEXT); setPadding(0, dp(10), 0, dp(2))
+    private fun statChip(parent: LinearLayout, label: String): TextView {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = PixelBox(Pal.PANEL_HI, Pal.INK, dpf(2.5f), shadowSteps = 1)
+            setPadding(dp(4), dp(8), dp(6), dp(10))
+        }
+        box.addView(title(label, 7f, Pal.MUTED))
+        val value = body("", Pal.CREAM, 20f).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, 0) }
+        box.addView(value)
+        parent.addView(box, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            if (parent.childCount > 0) leftMargin = dp(8)
+        })
+        return value
     }
 
-    private fun radio(t: String, id: Int) = RadioButton(this).apply {
-        text = t; this.id = id; setTextColor(TEXT); textSize = 14.5f
+    private fun toggleRow(name: String, desc: String, value: Boolean, onChange: (Boolean) -> Unit): View {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val texts = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        texts.addView(title(name, 10f, Pal.CREAM))
+        texts.addView(body(desc, Pal.MUTED, 17f).apply { setPadding(0, dp(4), dp(8), 0) })
+        row.addView(texts, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(PixelToggle(this, value, onChange))
+        return row
     }
 
-    @Suppress("DEPRECATION")
-    private fun switch(t: String, value: Boolean, onChange: (Boolean) -> Unit) = Switch(this).apply {
-        text = t; isChecked = value; setTextColor(TEXT); textSize = 14.5f; setPadding(0, dp(10), 0, dp(4))
-        setOnCheckedChangeListener { _, b -> onChange(b) }
+    private fun step(n: Int, t: String): View {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val badge = FrameLayout(this).apply { background = PixelBox(if (n % 2 == 1) Pal.MOSS else Pal.CREAM, Pal.INK, dpf(2f), shadowSteps = 1) }
+        badge.addView(title("$n", 10f, Pal.INK).apply { gravity = Gravity.CENTER },
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        row.addView(badge, LinearLayout.LayoutParams(dp(30), dp(30)))
+        row.addView(body(t, Pal.CREAM, 18f).apply { setPadding(dp(12), 0, 0, 0) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        return row
     }
 
     private fun field(hint: String, value: String, secret: Boolean, onChange: (String) -> Unit) = EditText(this).apply {
         this.hint = hint
         setText(value)
-        setTextColor(TEXT)
-        setHintTextColor(MUTED)
-        textSize = 14.5f
+        setTextColor(Pal.CREAM)
+        setHintTextColor(Pal.SLATE)
+        textSize = 19f
+        typeface = PixelFonts.body(this@MainActivity)
         isSingleLine = true
+        background = PixelBox(Pal.BG, Pal.SLATE, dpf(2.5f), shadowSteps = 0, shadow = 0)
+        setPadding(dp(12), dp(10), dp(12), dp(10))
         inputType = if (secret) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         else InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         addTextChangedListener(object : TextWatcher {
@@ -381,9 +504,9 @@ class MainActivity : Activity() {
         })
     }
 
-    private fun linkButton(t: String, url: String) = Button(this).apply {
-        text = t; isAllCaps = false; setTextColor(0xFF64B5F6.toInt()); background = null
-        gravity = Gravity.START or Gravity.CENTER_VERTICAL
+    private fun link(t: String, url: String) = body(t, Pal.CYAN, 18f).apply {
+        setPadding(0, dp(8), 0, dp(2))
+        isClickable = true
         setOnClickListener { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
     }
 }

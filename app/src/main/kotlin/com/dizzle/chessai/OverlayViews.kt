@@ -6,9 +6,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.RadialGradient
 import android.graphics.RectF
-import android.graphics.Shader
 import android.view.MotionEvent
 import android.view.View
 import com.dizzle.chessai.core.vision.BoardRect
@@ -16,59 +14,117 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
-/** Draws two pulsing glow dots (piece to move + target square) over the board. Not touchable. */
+/**
+ * Pixel-art move marker over the board (not touchable): cyan pixel brackets around the piece to
+ * move, a gold pixel target on the destination and a dotted pixel trail between them.
+ * Plays a short pop-in animation and then stays perfectly still – the continuous scan compares
+ * frames, so a looping animation would look like board changes.
+ */
 class HighlightView(context: Context) : View(context) {
     private var from = -1
     private var to = -1
-    private var pulse = 1f
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-    }
-    private val animator = ValueAnimator.ofFloat(0.8f, 1.1f).apply {
-        duration = 750
-        repeatMode = ValueAnimator.REVERSE
-        repeatCount = ValueAnimator.INFINITE
-        addUpdateListener { pulse = it.animatedValue as Float; invalidate() }
-    }
+    private var t = 1f
+    private val paint = Paint()
+    private var animator: ValueAnimator? = null
 
     fun show(fromVisual: Int, toVisual: Int) {
+        val changed = fromVisual != from || toVisual != to
         from = fromVisual; to = toVisual
-        if (!animator.isStarted) animator.start()
-        invalidate()
+        if (changed) {
+            animator?.cancel()
+            animator = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 380
+                addUpdateListener { t = it.animatedValue as Float; invalidate() }
+                start()
+            }
+        } else invalidate()
     }
 
     override fun onDetachedFromWindow() {
-        animator.cancel()
+        animator?.cancel()
         super.onDetachedFromWindow()
     }
-
-    private fun center(v: Int, q: Float) = floatArrayOf((v % 8 + 0.5f) * q, (v / 8 + 0.5f) * q)
 
     override fun onDraw(canvas: Canvas) {
         if (from < 0 || to < 0) return
         val q = width / 8f
-        val a = center(from, q)
-        val b = center(to, q)
-        line.strokeWidth = q * 0.07f
-        line.color = Color.argb(150, 255, 214, 0)
-        canvas.drawLine(a[0], a[1], b[0], b[1], line)
-        glow(canvas, a, q, Color.rgb(0, 229, 255))
-        glow(canvas, b, q, Color.rgb(255, 214, 0))
+        val u = q / 16f                       // one "pixel" of the marker
+        val fx = (from % 8) * q; val fy = (from / 8) * q
+        val tx = (to % 8) * q; val ty = (to / 8) * q
+
+        // dotted trail (appears progressively)
+        val ax = fx + q / 2; val ay = fy + q / 2
+        val bx = tx + q / 2; val by = ty + q / 2
+        val dist = kotlin.math.hypot(bx - ax, by - ay)
+        val n = (dist / (q * 0.3f)).toInt()
+        for (i in 1 until n) {
+            val f = i.toFloat() / n
+            if (f > t) break
+            val x = ax + (bx - ax) * f; val y = ay + (by - ay) * f
+            // keep the trail outside the start and target squares
+            if (kotlin.math.hypot(x - ax, y - ay) < q * 0.62f || kotlin.math.hypot(x - bx, y - by) < q * 0.5f) continue
+            val sx = (x / u).toInt() * u; val sy = (y / u).toInt() * u   // snap to the pixel grid
+            paint.color = Pal.INK
+            canvas.drawRect(sx - u, sy - u, sx + 2 * u, sy + 2 * u, paint)
+            paint.color = Pal.GOLD
+            canvas.drawRect(sx - u * 0.0f, sy - u * 0.0f, sx + u, sy + u, paint)
+        }
+
+        // cyan corner brackets around the piece (slide in from outside)
+        val inset = (1.5f + (1f - t) * -3f) * u
+        brackets(canvas, fx + inset, fy + inset, fx + q - inset, fy + q - inset, u)
+
+        // gold target on the destination (pops in)
+        val s = (0.7f + 0.45f * t)
+        target(canvas, tx + q / 2, ty + q / 2, u * s)
     }
 
-    private fun glow(canvas: Canvas, c: FloatArray, q: Float, color: Int) {
-        val r = q * 0.48f * pulse
-        val rr = Color.red(color); val gg = Color.green(color); val bb = Color.blue(color)
-        paint.shader = RadialGradient(
-            c[0], c[1], r,
-            intArrayOf(Color.argb(255, 255, 255, 255), Color.argb(235, rr, gg, bb), Color.argb(110, rr, gg, bb), Color.argb(0, rr, gg, bb)),
-            floatArrayOf(0f, 0.22f, 0.6f, 1f),
-            Shader.TileMode.CLAMP,
+    private fun brackets(c: Canvas, l: Float, t0: Float, r: Float, b: Float, u: Float) {
+        val len = 4 * u
+        val th = 1.5f * u
+        // outline first, then colour on top
+        for ((color, grow) in listOf(Pal.INK to u * 0.75f, Pal.CYAN to 0f)) {
+            paint.color = color
+            // top-left
+            c.drawRect(l - grow, t0 - grow, l + len + grow, t0 + th + grow, paint)
+            c.drawRect(l - grow, t0 - grow, l + th + grow, t0 + len + grow, paint)
+            // top-right
+            c.drawRect(r - len - grow, t0 - grow, r + grow, t0 + th + grow, paint)
+            c.drawRect(r - th - grow, t0 - grow, r + grow, t0 + len + grow, paint)
+            // bottom-left
+            c.drawRect(l - grow, b - th - grow, l + len + grow, b + grow, paint)
+            c.drawRect(l - grow, b - len - grow, l + th + grow, b + grow, paint)
+            // bottom-right
+            c.drawRect(r - len - grow, b - th - grow, r + grow, b + grow, paint)
+            c.drawRect(r - th - grow, b - len - grow, r + grow, b + grow, paint)
+        }
+        // soft cyan tint inside
+        paint.color = (0x1A52E3FF)
+        c.drawRect(l + th, t0 + th, r - th, b - th, paint)
+    }
+
+    /** Pixel diamond ring with a solid core. */
+    private fun target(c: Canvas, cx: Float, cy: Float, u: Float) {
+        val ring = listOf(
+            "....kkkk....",
+            "..kkggggkk..",
+            ".kggkkkkggk.",
+            ".kgk....kgk.",
+            "kgk..kk..kgk",
+            "kgk.kggk.kgk",
+            "kgk.kggk.kgk",
+            "kgk..kk..kgk",
+            ".kgk....kgk.",
+            ".kggkkkkggk.",
+            "..kkggggkk..",
+            "....kkkk....",
         )
-        canvas.drawCircle(c[0], c[1], r, paint)
-        paint.shader = null
+        val n = ring.size
+        val ox = cx - n * u / 2; val oy = cy - n * u / 2
+        for ((y, row) in ring.withIndex()) for ((x, ch) in row.withIndex()) {
+            paint.color = when (ch) { 'k' -> Pal.INK; 'g' -> Pal.GOLD; else -> continue }
+            c.drawRect(ox + x * u, oy + y * u, ox + (x + 1) * u, oy + (y + 1) * u, paint)
+        }
     }
 }
 
@@ -80,10 +136,12 @@ class HighlightView(context: Context) : View(context) {
 class CalibrationView(context: Context, initial: BoardRect) : View(context) {
     var rect = RectF(initial.x.toFloat(), initial.y.toFloat(), (initial.x + initial.size).toFloat(), (initial.y + initial.size).toFloat())
         private set
-    private val dim = Paint().apply { color = Color.argb(110, 0, 0, 0) }
-    private val frame = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.rgb(255, 214, 0); strokeWidth = 6f }
-    private val grid = Paint().apply { style = Paint.Style.STROKE; color = Color.argb(170, 255, 214, 0); strokeWidth = 2f }
-    private val handle = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(255, 214, 0) }
+    private val dim = Paint().apply { color = Color.argb(140, 10, 11, 14) }
+    private val frame = Paint().apply { style = Paint.Style.STROKE; color = Pal.GOLD; strokeWidth = 8f }
+    private val frameInk = Paint().apply { style = Paint.Style.STROKE; color = Pal.INK; strokeWidth = 16f }
+    private val grid = Paint().apply { style = Paint.Style.STROKE; color = Color.argb(190, 255, 200, 69); strokeWidth = 3f }
+    private val handle = Paint().apply { color = Pal.GOLD }
+    private val ink = Paint().apply { color = Pal.INK }
     private var mode = 0 // 1 = move, 2 = resize
     private var lx = 0f
     private var ly = 0f
@@ -99,8 +157,12 @@ class CalibrationView(context: Context, initial: BoardRect) : View(context) {
             canvas.drawLine(rect.left + i * q, rect.top, rect.left + i * q, rect.bottom, grid)
             canvas.drawLine(rect.left, rect.top + i * q, rect.right, rect.top + i * q, grid)
         }
+        canvas.drawRect(rect, frameInk)
         canvas.drawRect(rect, frame)
-        canvas.drawCircle(rect.right, rect.bottom, 28f, handle)
+        // square pixel handle bottom-right
+        canvas.drawRect(rect.right - 30f, rect.bottom - 30f, rect.right + 30f, rect.bottom + 30f, ink)
+        canvas.drawRect(rect.right - 22f, rect.bottom - 22f, rect.right + 22f, rect.bottom + 22f, handle)
+        canvas.drawRect(rect.right - 8f, rect.bottom - 8f, rect.right + 8f, rect.bottom + 8f, ink)
     }
 
     @SuppressLint("ClickableViewAccessibility")

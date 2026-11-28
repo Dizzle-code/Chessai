@@ -82,7 +82,10 @@ class OverlayService : Service() {
 
     private var engine: Engine? = null
 
-    private var button: TextView? = null
+    private var button: PixelFab? = null
+    private var bubble: TextView? = null
+    private var bubbleParams: WindowManager.LayoutParams? = null
+    @Volatile private var bubbleScreenRect = Rect()
     private var buttonParams: WindowManager.LayoutParams? = null
     private var highlight: HighlightView? = null
     private var highlightParams: WindowManager.LayoutParams? = null
@@ -128,7 +131,7 @@ class OverlayService : Service() {
             try {
                 setupProjection(code, data)
             } catch (e: Exception) {
-                toast("Bildschirmaufnahme nicht möglich: ${e.message}")
+                say("Bildschirmaufnahme nicht möglich: ${e.message}")
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -143,8 +146,8 @@ class OverlayService : Service() {
         running = false
         autoMode = false
         main.removeCallbacksAndMessages(null)
-        listOf(button, highlight, menu, calibration).forEach { v -> v?.let { runCatching { wm.removeView(it) } } }
-        button = null; highlight = null; menu = null; calibration = null
+        listOf(button, highlight, menu, calibration, bubble).forEach { v -> v?.let { runCatching { wm.removeView(it) } } }
+        button = null; highlight = null; menu = null; calibration = null; bubble = null
         captureHandler.post {
             latestImage?.close(); latestImage = null
             virtualDisplay?.release()
@@ -291,25 +294,17 @@ class OverlayService : Service() {
     }
 
     private fun updateButtonLook() {
-        val b = button ?: return
-        val bg = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(if (busy) Color.argb(220, 120, 120, 120) else if (autoMode) Color.argb(220, 0, 150, 90) else Color.argb(220, 30, 136, 229))
-            setStroke(dp(2), Color.argb(230, 255, 214, 0))
+        button?.state = when {
+            busy -> PixelFab.State.BUSY
+            autoMode -> PixelFab.State.SCANNING
+            else -> PixelFab.State.MANUAL
         }
-        b.background = bg
-        b.text = if (busy) "…" else "♞"
     }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun addButton() {
-        val size = dp(56)
-        val b = TextView(this).apply {
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            textSize = 26f
-            elevation = dp(6).toFloat()
-        }
+        val size = dp(58)
+        val b = PixelFab(this).apply { contentDescription = "Chess AI" }
         button = b
         updateButtonLook()
         val p = overlayParams(size, size, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
@@ -379,7 +374,7 @@ class OverlayService : Service() {
         v.show(from, to)
         fixPosition(v, p, rect.x, rect.y)
         dotSquares = setOf(from, to)
-        refreshReferenceAt = System.currentTimeMillis() + 400
+        refreshReferenceAt = System.currentTimeMillis() + 700 // after the pop-in animation
     }
 
     private fun clearHighlight() {
@@ -392,44 +387,62 @@ class OverlayService : Service() {
 
     private fun showMenu() {
         if (menu != null) { closeMenu(); return }
+        hideBubble()
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            background = GradientDrawable().apply { setColor(Color.argb(240, 28, 30, 36)); cornerRadius = dp(14).toFloat() }
+            setPadding(dp(12), dp(12), dp(16), dp(16))
+            background = PixelBox(Pal.PANEL, Pal.INK, dpf(3f), shadowSteps = 2)
         }
-        fun item(text: String, action: () -> Unit) {
-            box.addView(Button(this).apply {
-                this.text = text
-                isAllCaps = false
-                setTextColor(Color.WHITE)
-                background = null
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(View(this).apply { background = Sprites.knight() }, LinearLayout.LayoutParams(dp(26), dp(26)))
+        head.addView(TextView(this).apply {
+            text = "CHESS AI"; textSize = 10f; setTextColor(Pal.GOLD); typeface = PixelFonts.title(this@OverlayService)
+            setPadding(dp(8), 0, 0, 0)
+        })
+        box.addView(head)
+        box.addView(CheckerStrip(this, 16), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(8); bottomMargin = dp(4)
+        })
+        fun item(text: String, color: Int = Pal.CREAM, action: () -> Unit) {
+            box.addView(TextView(this).apply {
+                val label = android.text.SpannableString("> $text")
+                label.setSpan(android.text.style.ForegroundColorSpan(Pal.GOLD), 0, 1, 0)
+                this.text = label
+                textSize = 8.5f
+                setTextColor(color)
+                typeface = PixelFonts.title(this@OverlayService)
+                setPadding(dp(6), dp(11), dp(6), dp(11))
+                isClickable = true
+                background = android.graphics.drawable.StateListDrawable().apply {
+                    addState(intArrayOf(android.R.attr.state_pressed), PixelBox(Pal.PANEL_HI, Pal.PANEL_HI, dpf(2f), shadowSteps = 0, shadow = 0))
+                }
                 setOnClickListener { closeMenu(); action() }
             })
         }
-        item(if (autoMode) "⏸  Dauer-Scan ausschalten" else "▶  Dauer-Scan einschalten") { toggleAuto() }
-        item("🔍  Jetzt analysieren") { analyzeNow(auto = false, forceAi = false) }
-        item("🤖  Mit AI neu einlesen") { analyzeNow(auto = false, forceAi = true) }
-        item("♻  Neue Partie") {
+        item(if (autoMode) "DAUER-SCAN AUS" else "DAUER-SCAN AN", Pal.GOLD) { toggleAuto() }
+        item("JETZT SCANNEN") { analyzeNow(auto = false, forceAi = false) }
+        item("MIT AI EINLESEN") { analyzeNow(auto = false, forceAi = true) }
+        item("NEUE PARTIE") {
             worker.execute { analyzer.resetGame(); stableFeatures = null }
-            clearHighlight(); toast("Neue Partie – Stellung wird neu erkannt")
+            clearHighlight(); say("Neue Partie – Stellung wird neu erkannt")
         }
-        item("▦  Brett manuell festlegen") { startCalibration() }
-        if (prefs.manualRect != null) item("✦  Brett automatisch finden") {
-            prefs.manualRect = null; worker.execute { analyzer.forgetRect() }; toast("Automatische Brett-Erkennung aktiv")
+        item("BRETT FESTLEGEN") { startCalibration() }
+        if (prefs.manualRect != null) item("BRETT AUTO-SUCHE") {
+            prefs.manualRect = null; worker.execute { analyzer.forgetRect() }; say("Brett wird wieder automatisch gesucht")
         }
-        item("🧠  Gelernte Figuren löschen") {
+        item("FIGUREN NEU LERNEN") {
             worker.execute { analyzer.library.clear(); analyzer.resetGame(); PieceStore.clear(this) }
-            toast("Figuren werden neu gelernt")
+            say("Figuren werden neu gelernt")
         }
-        item("⏹  Overlay beenden") { stopSelf() }
-        item("✕  Schließen") {}
+        item("OVERLAY BEENDEN", Pal.CORAL) { stopSelf() }
+        item("SCHLIESSEN", Pal.MUTED) {}
 
-        val p = overlayParams(dp(270), WindowManager.LayoutParams.WRAP_CONTENT,
+        val w = dp(250)
+        val p = overlayParams(w, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
         val bp = buttonParams!!
-        p.x = max(0, min(bp.x - dp(270) + bp.width, screenW - dp(270)))
-        p.y = if (bp.y + bp.height + dp(420) < screenH) bp.y + bp.height + dp(4) else max(0, bp.y - dp(424))
+        p.x = max(0, min(bp.x - w + bp.width, screenW - w))
+        p.y = if (bp.y + bp.height + dp(440) < screenH) bp.y + bp.height + dp(6) else max(0, bp.y - dp(446))
         box.setOnTouchListener { _, e -> if (e.actionMasked == MotionEvent.ACTION_OUTSIDE) closeMenu(); false }
         menu = box
         wm.addView(box, p)
@@ -450,21 +463,25 @@ class OverlayService : Service() {
         root.addView(cv, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-            background = GradientDrawable().apply { setColor(Color.argb(235, 28, 30, 36)); cornerRadius = dp(14).toFloat() }
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(12), dp(18), dp(16))
+            background = PixelBox(Pal.PANEL, Pal.INK, dpf(3f), shadowSteps = 2)
         }
         val hint = TextView(this).apply {
-            text = "Raster auf das Brett ziehen,\nEcke unten rechts = Größe"
-            setTextColor(Color.WHITE); textSize = 13f
+            text = "Raster aufs Brett ziehen.\nGoldene Ecke = Größe."
+            setTextColor(Pal.CREAM); textSize = 18f; typeface = PixelFonts.body(this@OverlayService)
         }
         bar.addView(hint, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(Button(this).apply {
-            text = "Abbrechen"; isAllCaps = false
-            setOnClickListener { endCalibration() }
-        })
-        bar.addView(Button(this).apply {
-            text = "OK"; isAllCaps = false
-            setOnClickListener {
+        fun pixelBtn(label: String, fill: Int, onClick: () -> Unit) = TextView(this).apply {
+            text = label; textSize = 9f; setTextColor(Pal.INK); typeface = PixelFonts.title(this@OverlayService)
+            gravity = Gravity.CENTER
+            background = PixelBox(fill, Pal.INK, dpf(2.5f), shadowSteps = 2)
+            setPadding(dp(12), dp(12), dp(16), dp(16))
+            isClickable = true
+            setOnClickListener { onClick() }
+        }
+        bar.addView(pixelBtn("ZURÜCK", Pal.SLATE) { endCalibration() })
+        bar.addView(pixelBtn("OK", Pal.GOLD) {
                 val loc = IntArray(2)
                 cv.getLocationOnScreen(loc)
                 val r = cv.result()
@@ -472,9 +489,9 @@ class OverlayService : Service() {
                 prefs.manualRect = abs
                 worker.execute { analyzer.forgetRect(); analyzer.resetGame(); stableFeatures = null }
                 endCalibration()
-                toast("Brett gespeichert")
-            }
-        })
+                say("Brett gespeichert")
+            }, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(10) })
         root.addView(bar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM).apply {
             setMargins(dp(12), dp(12), dp(12), dp(48))
         })
@@ -502,6 +519,7 @@ class OverlayService : Service() {
         // hide our own overlays so they are not part of the screenshot
         highlight?.visibility = View.INVISIBLE
         button?.visibility = View.INVISIBLE
+        bubble?.visibility = View.GONE
         main.postDelayed({
             captureFrame { img ->
                 main.post { button?.visibility = View.VISIBLE }
@@ -559,16 +577,16 @@ class OverlayService : Service() {
         updateButtonLook()
         if (res == null) {
             highlight?.visibility = View.VISIBLE
-            if (!auto && error != null) toast(error)
+            if (!auto && error != null) say(error)
             return
         }
         val rect = res.rect
         if (res.ok && res.myTurn && res.fromVisual >= 0 && rect != null) {
             showHighlight(rect, res.fromVisual, res.toVisual)
-            if (!auto || res.source == Analyzer.Source.AI) toast(res.message)
+            if (!auto || res.source == Analyzer.Source.AI) say(res.message)
         } else {
             clearHighlight()
-            if (!auto || !res.ok && res.source == Analyzer.Source.AI) toast(res.message)
+            if (!auto || !res.ok && res.source == Analyzer.Source.AI) say(res.message)
         }
     }
 
@@ -586,8 +604,8 @@ class OverlayService : Service() {
         autoMode = !autoMode
         prefs.autoMode = autoMode
         updateButtonLook()
-        if (autoMode) { startAuto(); toast("Dauer-Scan an: der beste Zug erscheint automatisch, wenn du dran bist") }
-        else { main.removeCallbacks(autoTick); toast("Dauer-Scan aus – zum Analysieren auf ♞ tippen") }
+        if (autoMode) { startAuto(); say("Dauer-Scan an: der beste Zug erscheint automatisch, wenn du dran bist") }
+        else { main.removeCallbacks(autoTick); say("Dauer-Scan aus – zum Scannen auf den Springer tippen") }
         updateNotification()
     }
 
@@ -618,7 +636,8 @@ class OverlayService : Service() {
                     refreshReferenceAt = 0L
                     return@execute
                 }
-                val ignore = squaresUnder(buttonScreenRect, rect)
+                val ignore = HashSet(squaresUnder(buttonScreenRect, rect))
+                if (!bubbleScreenRect.isEmpty) ignore += squaresUnder(bubbleScreenRect, rect)
                 if (Analyzer.changedSquares(ref, feats, ignore) == 0) { pendingFeatures = null; return@execute }
                 val pend = pendingFeatures
                 if (pend != null && Analyzer.changedSquares(pend, feats, ignore) == 0) {
@@ -642,7 +661,54 @@ class OverlayService : Service() {
         return out
     }
 
-    private fun toast(msg: String) {
-        main.post { Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show() }
+    private val hideBubbleTask = Runnable { hideBubble() }
+
+    private fun hideBubble() {
+        val b = bubble ?: return
+        if (b.visibility == View.VISIBLE) {
+            b.visibility = View.GONE
+            bubbleScreenRect = Rect()
+            // squares under the bubble change when it disappears – re-baseline the scan
+            if (autoMode) refreshReferenceAt = System.currentTimeMillis() + 250
+        }
+    }
+
+    /** Pixel speech bubble next to the knight button (replaces Android toasts). */
+    private fun say(msg: String) {
+        main.post {
+            val bp = buttonParams ?: run { Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show(); return@post }
+            var v = bubble
+            var p = bubbleParams
+            if (v == null || p == null) {
+                v = TextView(this).apply {
+                    setTextColor(Pal.CREAM)
+                    textSize = 18f
+                    typeface = PixelFonts.body(this@OverlayService)
+                    background = PixelBox(Pal.PANEL, Pal.GOLD, dpf(2.5f), shadowSteps = 2)
+                    setPadding(dp(12), dp(8), dp(16), dp(12))
+                    maxWidth = (screenW * 0.72).toInt()
+                }
+                p = overlayParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+                p.alpha = 0.95f
+                bubble = v; bubbleParams = p
+                wm.addView(v, p)
+            }
+            v.text = msg
+            val rightSide = bp.x + bp.width / 2 > screenW / 2
+            p.gravity = Gravity.TOP or (if (rightSide) Gravity.END else Gravity.START)
+            p.x = if (rightSide) max(0, screenW - (bp.x + bp.width)) else max(0, bp.x)
+            p.y = if (bp.y + bp.height + dp(90) < screenH) bp.y + bp.height + dp(8) else max(0, bp.y - dp(70))
+            v.visibility = View.VISIBLE
+            runCatching { wm.updateViewLayout(v, p) }
+            val view = v
+            view.post {
+                val loc = IntArray(2)
+                view.getLocationOnScreen(loc)
+                bubbleScreenRect = Rect(loc[0], loc[1], loc[0] + view.width, loc[1] + view.height)
+            }
+            main.removeCallbacks(hideBubbleTask)
+            main.postDelayed(hideBubbleTask, if (msg.length > 60) 4500 else 2800)
+        }
     }
 }
