@@ -20,8 +20,9 @@ installieren. Android 8.0 oder neuer.
 4. **Lange drücken** öffnet das Menü: Auto-Modus, Brett manuell festlegen, mit AI neu einlesen,
    neue Partie, gelernte Figuren löschen, beenden.
 
-Im **Auto-Modus** schaut die App alle 1,5 s (lokal, ohne Tokens) aufs Brett und zeigt nach jedem
-Gegnerzug automatisch den nächsten besten Zug.
+**Dauer-Scan (Standard):** Nach dem Start schaut die App laufend (lokal, ohne Tokens) aufs Brett,
+verfolgt jeden Zug – auch deinen eigenen – und zeigt automatisch den besten Zug, sobald du wieder
+am Zug ist. Ein-/ausschalten über langes Drücken auf ♞ oder direkt in der Benachrichtigung.
 
 ## Token-sparend by Design
 

@@ -55,9 +55,10 @@ class OverlayService : Service() {
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_DATA = "data"
         const val ACTION_STOP = "com.dizzle.chessai.STOP"
+        const val ACTION_TOGGLE_SCAN = "com.dizzle.chessai.TOGGLE_SCAN"
         private const val CHANNEL = "overlay"
         private const val NOTIF_ID = 1
-        private const val AUTO_INTERVAL_MS = 1500L
+        private const val AUTO_INTERVAL_MS = 800L
         private const val AUTO_AI_MIN_GAP_MS = 20_000L
 
         @Volatile var running = false
@@ -95,6 +96,8 @@ class OverlayService : Service() {
     private var stableFeatures: Array<SquareFeature>? = null
     private var pendingFeatures: Array<SquareFeature>? = null
     @Volatile private var dotSquares: Set<Int> = emptySet()
+    /** After the dots appear, the next scan becomes the reference (so the user's own move is seen too). */
+    @Volatile private var refreshReferenceAt = 0L
     @Volatile private var buttonScreenRect = Rect()
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -110,6 +113,10 @@ class OverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             stopSelf()
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_TOGGLE_SCAN) {
+            if (running) toggleAuto()
             return START_NOT_STICKY
         }
         startForegroundCompat()
@@ -152,9 +159,7 @@ class OverlayService : Service() {
 
     // ------------------------------------------------------------------ notification
 
-    private fun startForegroundCompat() {
-        val nm = getSystemService(NotificationManager::class.java)!!
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Chess AI Overlay", NotificationManager.IMPORTANCE_LOW))
+    private fun buildNotification(): Notification {
         val stop = PendingIntent.getService(
             this, 1, Intent(this, OverlayService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
@@ -162,14 +167,30 @@ class OverlayService : Service() {
         val open = PendingIntent.getActivity(
             this, 2, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val n = Notification.Builder(this, CHANNEL)
+        val toggle = PendingIntent.getService(
+            this, 3, Intent(this, OverlayService::class.java).setAction(ACTION_TOGGLE_SCAN),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_knight)
-            .setContentTitle("Chess AI aktiv")
-            .setContentText("Tippe auf den ♞-Button über dem Brett")
+            .setContentTitle(if (autoMode) "Chess AI · Dauer-Scan aktiv" else "Chess AI aktiv")
+            .setContentText(if (autoMode) "Der beste Zug erscheint automatisch, sobald du dran bist"
+                else "Tippe auf den ♞-Button über dem Brett")
             .setContentIntent(open)
+            .addAction(Notification.Action.Builder(null, if (autoMode) "Scan pausieren" else "Dauer-Scan", toggle).build())
             .addAction(Notification.Action.Builder(null, "Beenden", stop).build())
             .setOngoing(true)
             .build()
+    }
+
+    private fun updateNotification() {
+        runCatching { getSystemService(NotificationManager::class.java)!!.notify(NOTIF_ID, buildNotification()) }
+    }
+
+    private fun startForegroundCompat() {
+        val nm = getSystemService(NotificationManager::class.java)!!
+        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Chess AI Overlay", NotificationManager.IMPORTANCE_LOW))
+        val n = buildNotification()
         if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         else startForeground(NOTIF_ID, n)
     }
@@ -358,6 +379,7 @@ class OverlayService : Service() {
         v.show(from, to)
         fixPosition(v, p, rect.x, rect.y)
         dotSquares = setOf(from, to)
+        refreshReferenceAt = System.currentTimeMillis() + 400
     }
 
     private fun clearHighlight() {
@@ -385,7 +407,7 @@ class OverlayService : Service() {
                 setOnClickListener { closeMenu(); action() }
             })
         }
-        item(if (autoMode) "⏸  Auto-Modus ausschalten" else "▶  Auto-Modus einschalten") { toggleAuto() }
+        item(if (autoMode) "⏸  Dauer-Scan ausschalten" else "▶  Dauer-Scan einschalten") { toggleAuto() }
         item("🔍  Jetzt analysieren") { analyzeNow(auto = false, forceAi = false) }
         item("🤖  Mit AI neu einlesen") { analyzeNow(auto = false, forceAi = true) }
         item("♻  Neue Partie") {
@@ -522,9 +544,10 @@ class OverlayService : Service() {
         } else if (res.ok) {
             prefs.localHits = prefs.localHits + 1
         }
-        if (res.ok) {
-            PieceStore.save(this, analyzer.library)
-            // reference frame for auto mode (taken without our overlays)
+        if (res.ok) PieceStore.save(this, analyzer.library)
+        // Reference frame for the continuous scan (taken without our overlays). Also after a failed
+        // recognition, so the scan only retries once the board changes again.
+        if (res.rect != null) {
             stableFeatures = analyzer.features(img, prefs.manualRect)?.second
             pendingFeatures = null
         }
@@ -563,8 +586,9 @@ class OverlayService : Service() {
         autoMode = !autoMode
         prefs.autoMode = autoMode
         updateButtonLook()
-        if (autoMode) { startAuto(); toast("Auto-Modus: Züge werden automatisch angezeigt") }
-        else { main.removeCallbacks(autoTick); toast("Auto-Modus aus") }
+        if (autoMode) { startAuto(); toast("Dauer-Scan an: der beste Zug erscheint automatisch, wenn du dran bist") }
+        else { main.removeCallbacks(autoTick); toast("Dauer-Scan aus – zum Analysieren auf ♞ tippen") }
+        updateNotification()
     }
 
     private fun startAuto() {
@@ -585,8 +609,16 @@ class OverlayService : Service() {
                     main.post { analyzeNow(auto = true, forceAi = false) }
                     return@execute
                 }
-                val ignore = HashSet<Int>(dotSquares)
-                ignore += squaresUnder(buttonScreenRect, rect)
+                val refreshAt = refreshReferenceAt
+                if (refreshAt != 0L) {
+                    if (System.currentTimeMillis() < refreshAt) return@execute
+                    // dots are on screen now: take them into the reference, then watch all 64 squares
+                    stableFeatures = feats
+                    pendingFeatures = null
+                    refreshReferenceAt = 0L
+                    return@execute
+                }
+                val ignore = squaresUnder(buttonScreenRect, rect)
                 if (Analyzer.changedSquares(ref, feats, ignore) == 0) { pendingFeatures = null; return@execute }
                 val pend = pendingFeatures
                 if (pend != null && Analyzer.changedSquares(pend, feats, ignore) == 0) {

@@ -76,7 +76,7 @@ class Prefs(context: Context) {
         set(v) = sp.edit().putBoolean("use_stockfish", v).apply()
 
     var autoMode: Boolean
-        get() = sp.getBoolean("auto_mode", false)
+        get() = sp.getBoolean("auto_mode", true)
         set(v) = sp.edit().putBoolean("auto_mode", v).apply()
 
     var manualRect: BoardRect?

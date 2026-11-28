@@ -197,15 +197,15 @@ class MainActivity : Activity() {
             })
         })
         game.addView(switch("Stockfish verwenden (falls enthalten)", prefs.useStockfish) { prefs.useStockfish = it })
-        game.addView(switch("Auto-Modus (Zug erscheint automatisch nach Gegnerzug)", prefs.autoMode) { prefs.autoMode = it })
+        game.addView(switch("Dauer-Scan: bester Zug erscheint automatisch, sobald du dran bist", prefs.autoMode) { prefs.autoMode = it })
 
         // ---- help
         val help = card("So geht's")
         help.addView(muted(
             "1. Overlay starten und Bildschirmaufnahme erlauben.\n" +
                 "2. Schach-App öffnen. Den ♞-Button an eine freie Stelle ziehen.\n" +
-                "3. Wenn du am Zug bist: ♞ antippen → Cyan = Figur, Gelb = Zielfeld.\n" +
-                "4. Lange drücken = Menü (Auto-Modus, Brett manuell festlegen, AI neu einlesen, Neue Partie).\n\n" +
+                "3. Dauer-Scan (Standard): Sobald du am Zug bist, erscheint der beste Zug von selbst – Cyan = Figur, Gelb = Zielfeld. Am besten eine Partie aus der Grundstellung starten, dann lernt die App die Figuren ohne AI.\n" +
+                "4. ♞ antippen = sofort neu analysieren. Lange drücken = Menü (Dauer-Scan an/aus, Brett manuell festlegen, AI neu einlesen, Neue Partie).\n\n" +
                 "Fairplay: Auf Online-Plattformen gegen Menschen ist Engine-Hilfe verboten und führt zur Sperre. " +
                 "Nutze die App zum Lernen, für Analysen und gegen Computer-Gegner."
         ))
