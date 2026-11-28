@@ -421,6 +421,7 @@ class OverlayService : Service() {
             })
         }
         item(if (autoMode) "DAUER-SCAN AUS" else "DAUER-SCAN AN", Pal.GOLD) { toggleAuto() }
+        item(if (prefs.autoPlay) "AUTO-ZUG AUS" else "AUTO-ZUG AN", Pal.CYAN) { toggleAutoPlay() }
         item("JETZT SCANNEN") { analyzeNow(auto = false, forceAi = false) }
         item("MIT AI EINLESEN") { analyzeNow(auto = false, forceAi = true) }
         item("NEUE PARTIE") {
@@ -585,10 +586,74 @@ class OverlayService : Service() {
         if (res.ok && res.myTurn && res.fromVisual >= 0 && rect != null) {
             showHighlight(rect, res.fromVisual, res.toVisual)
             if (!auto || res.source == Analyzer.Source.AI) say(res.message)
+            if (prefs.autoPlay) scheduleAutoMove(res, rect)
         } else {
             clearHighlight()
             if (!auto || !res.ok && res.source == Analyzer.Source.AI) say(res.message)
         }
+    }
+
+    // ------------------------------------------------------------------ auto move (AUTO-ZUG)
+
+    private var lastAutoMoveFen: String? = null
+    private var autoMovePending: Runnable? = null
+
+    private fun scheduleAutoMove(res: Analyzer.Result, rect: BoardRect) {
+        val fen = res.fen ?: return
+        if (fen == lastAutoMoveFen) return          // never play twice in the same position
+        val svc = ChessTapService.instance
+        if (svc == null) {
+            say("AUTO-ZUG: Bitte in den Bedienungshilfen „Chess AI Auto-Zug“ einschalten")
+            return
+        }
+        autoMovePending?.let { main.removeCallbacks(it) }
+        val q = rect.size / 8f
+        fun cx(v: Int) = rect.x + (v % 8 + 0.5f) * q
+        fun cy(v: Int) = rect.y + (v / 8 + 0.5f) * q
+        val promotion = (res.engine?.bestMove?.length ?: 0) >= 5
+        val from = res.fromVisual; val to = res.toVisual
+        val task = Runnable {
+            autoMovePending = null
+            if (busy || calibration != null || menu != null) return@Runnable
+            lastAutoMoveFen = fen
+            setButtonTouchable(false)                // our button must not swallow the taps
+            svc.playMove(cx(from), cy(from), cx(to), cy(to), promotion) { ok ->
+                setButtonTouchable(true)
+                if (!ok) { lastAutoMoveFen = null; say("AUTO-ZUG: Tippen wurde vom System abgebrochen") }
+                // the continuous scan notices the move; make sure it runs
+                if (!autoMode) analyzeLater()
+            }
+        }
+        autoMovePending = task
+        main.postDelayed(task, 700L + (Math.random() * 800).toLong())
+    }
+
+    private fun analyzeLater() {
+        main.postDelayed({ if (!busy) analyzeNow(auto = true, forceAi = false) }, 1500)
+    }
+
+    private fun setButtonTouchable(touchable: Boolean) {
+        val b = button ?: return
+        val p = buttonParams ?: return
+        p.flags = if (touchable) p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        else p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        runCatching { wm.updateViewLayout(b, p) }
+    }
+
+    private fun toggleAutoPlay() {
+        val on = !prefs.autoPlay
+        if (on && !ChessTapService.isEnabled(this)) {
+            say("Für AUTO-ZUG „Chess AI Auto-Zug“ in den Bedienungshilfen aktivieren")
+            runCatching {
+                startActivity(android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
+        }
+        prefs.autoPlay = on
+        if (on && !autoMode) toggleAuto()
+        lastAutoMoveFen = null
+        if (!on) autoMovePending?.let { main.removeCallbacks(it); autoMovePending = null }
+        say(if (on) "AUTO-ZUG an: die App zieht selbst, wenn du dran bist" else "AUTO-ZUG aus")
     }
 
     // ------------------------------------------------------------------ auto mode

@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Chess AI</string>
+    <string name="a11y_description">Chess AI Auto-Zug: tippt den vorgeschlagenen Zug für dich auf das Schachbrett (erst die Figur, dann das Zielfeld). Liest keine Bildschirminhalte und führt nur Fingertipps auf dem Brett aus, wenn du AUTO-ZUG eingeschaltet hast.</string>
 </resources>

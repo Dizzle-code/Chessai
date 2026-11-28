@@ -203,6 +203,13 @@ class MainActivity : Activity() {
             prefs.thinkMs = ms; setThink(ms)
         }, lp(top = 6))
         game.addView(toggleRow("DAUER-SCAN", "Bester Zug erscheint automatisch, sobald du dran bist", prefs.autoMode) { prefs.autoMode = it }, lp(top = 14))
+        game.addView(toggleRow("AUTO-ZUG", "Die App tippt den besten Zug selbst (nur gegen Computer-Gegner verwenden!)", prefs.autoPlay) { on ->
+            prefs.autoPlay = on
+            if (on) {
+                prefs.autoMode = true
+                if (!ChessTapService.isEnabled(this)) showAutoPlaySetup()
+            }
+        }, lp(top = 10))
         game.addView(toggleRow("STOCKFISH", "Starke Engine nutzen (sonst eingebaute Engine)", prefs.useStockfish) { prefs.useStockfish = it }, lp(top = 10))
 
         // ---- how to
@@ -284,6 +291,29 @@ class MainActivity : Activity() {
                     ?: Toast.makeText(this, "Mit ChatGPT angemeldet · Modell: ${prefs.openAiModel}", Toast.LENGTH_SHORT).show()
             }
         }.start()
+    }
+
+    private fun showAutoPlaySetup() {
+        val text = TextView(this).apply {
+            text = "Damit die App selbst tippen darf, braucht sie die Bedienungshilfe „Chess AI Auto-Zug“.\n\n" +
+                "1. Gleich öffnen sich die Bedienungshilfen.\n" +
+                "2. „Chess AI Auto-Zug“ (evtl. unter „Installierte Apps“) antippen und einschalten.\n\n" +
+                "Ist der Schalter ausgegraut (Android 13+, „Eingeschränkte Einstellung“): App-Info von Chess AI öffnen → ⋮ oben rechts → „Eingeschränkte Einstellungen zulassen“, dann nochmal versuchen.\n\n" +
+                "Fairplay: Automatisches Ziehen gegen Menschen wird von Schach-Plattformen erkannt und gesperrt."
+            setPadding(dp(20), dp(12), dp(20), dp(4))
+            textSize = 15f
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("AUTO-ZUG einrichten")
+            .setView(text)
+            .setPositiveButton("Bedienungshilfen öffnen") { _, _ ->
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            .setNeutralButton("App-Info") { _, _ ->
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }
+            .setNegativeButton("Später", null)
+            .show()
     }
 
     private fun showError(title: String, message: String) {

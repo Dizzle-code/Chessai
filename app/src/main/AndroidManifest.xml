@@ -31,6 +31,20 @@
             </intent-filter>
         </activity>
 
+        <!-- Optional: performs the suggested move as taps (AUTO-ZUG). Enabled by the user in Accessibility settings. -->
+        <service
+            android:name=".ChessTapService"
+            android:exported="true"
+            android:label="Chess AI Auto-Zug"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_config" />
+        </service>
+
         <service
             android:name=".OverlayService"
             android:exported="false"
