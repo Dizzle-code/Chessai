@@ -75,6 +75,14 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("use_stockfish", true)
         set(v) = sp.edit().putBoolean("use_stockfish", v).apply()
 
+    var themeId: ThemeId
+        get() = runCatching { ThemeId.valueOf(sp.getString("theme", ThemeId.PIXEL.name)!!) }.getOrDefault(ThemeId.PIXEL)
+        set(v) = sp.edit().putString("theme", v.name).apply()
+
+    var onboarded: Boolean
+        get() = sp.getBoolean("onboarded", false)
+        set(v) = sp.edit().putBoolean("onboarded", v).apply()
+
     /** Perform the suggested move as taps via the accessibility service. */
     var autoPlay: Boolean
         get() = sp.getBoolean("auto_play", false)

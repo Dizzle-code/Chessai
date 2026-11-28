@@ -42,6 +42,13 @@ android {
         jvmTarget = "17"
     }
 
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all { it.maxHeapSize = "3g"; it.systemProperty("robolectric.graphicsMode", "NATIVE") }
+        }
+    }
+
     packaging {
         // Stockfish is shipped as libstockfish.so and must be extracted to disk to be executable.
         jniLibs { useLegacyPackaging = true }
@@ -61,4 +68,6 @@ android {
 
 dependencies {
     implementation(project(":core"))
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }

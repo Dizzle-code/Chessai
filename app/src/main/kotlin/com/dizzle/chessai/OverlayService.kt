@@ -63,6 +63,13 @@ class OverlayService : Service() {
 
         @Volatile var running = false
             private set
+        @Volatile private var instance: OverlayService? = null
+
+        /** Called by the app when the user picks another theme. */
+        fun onThemeChanged() {
+            val s = instance ?: return
+            s.main.post { s.applyTheme() }
+        }
     }
 
     private lateinit var wm: WindowManager
@@ -82,7 +89,7 @@ class OverlayService : Service() {
 
     private var engine: Engine? = null
 
-    private var button: PixelFab? = null
+    private var button: ThemedFab? = null
     private var bubble: TextView? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
     @Volatile private var bubbleScreenRect = Rect()
@@ -109,6 +116,7 @@ class OverlayService : Service() {
         super.onCreate()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         prefs = Prefs(this)
+        instance = this
         analyzer = Analyzer(PieceStore.load(this), ::encodeBoardJpeg)
         worker.execute { runCatching { com.dizzle.chessai.core.Openings.warmUp() } }
         autoMode = prefs.autoMode
@@ -145,6 +153,7 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         running = false
+        instance = null
         autoMode = false
         main.removeCallbacksAndMessages(null)
         listOf(button, highlight, menu, calibration, bubble).forEach { v -> v?.let { runCatching { wm.removeView(it) } } }
@@ -294,18 +303,31 @@ class OverlayService : Service() {
         }
     }
 
+    private fun th() = Themes.current(this)
+
+    /** Restyle all overlay windows after a theme change. */
+    private fun applyTheme() {
+        Themes.invalidate()
+        button?.invalidate()
+        highlight?.invalidate()
+        bubble?.let { runCatching { wm.removeView(it) } }
+        bubble = null; bubbleParams = null; bubbleScreenRect = Rect()
+        closeMenu()
+        if (autoMode) refreshReferenceAt = System.currentTimeMillis() + 300
+    }
+
     private fun updateButtonLook() {
         button?.state = when {
-            busy -> PixelFab.State.BUSY
-            autoMode -> PixelFab.State.SCANNING
-            else -> PixelFab.State.MANUAL
+            busy -> FabState.BUSY
+            autoMode -> FabState.SCANNING
+            else -> FabState.MANUAL
         }
     }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun addButton() {
         val size = dp(58)
-        val b = PixelFab(this).apply { contentDescription = "Chess AI" }
+        val b = ThemedFab(this).apply { contentDescription = "Chess AI" }
         button = b
         updateButtonLook()
         val p = overlayParams(size, size, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
@@ -391,55 +413,52 @@ class OverlayService : Service() {
         hideBubble()
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(12), dp(16), dp(16))
-            background = PixelBox(Pal.PANEL, Pal.INK, dpf(3f), shadowSteps = 2)
+            setPadding(dp(14), dp(14), dp(18), dp(18))
+            background = th().panel(this@OverlayService, overlay = true)
         }
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        head.addView(View(this).apply { background = Sprites.knight() }, LinearLayout.LayoutParams(dp(26), dp(26)))
+        head.addView(ThemeLogo(this, th()), LinearLayout.LayoutParams(dp(28), dp(28)))
         head.addView(TextView(this).apply {
-            text = "CHESS AI"; textSize = 10f; setTextColor(Pal.GOLD); typeface = PixelFonts.title(this@OverlayService)
-            setPadding(dp(8), 0, 0, 0)
+            text = th().t("Chess AI"); th().styleTitle(this, th().label + 3, th().accent.takeIf { !th().isLight } ?: th().text)
+            setPadding(dp(10), 0, 0, 0)
         })
-        box.addView(head)
-        box.addView(CheckerStrip(this, 16), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(8); bottomMargin = dp(4)
+        box.addView(head, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(6)
         })
-        fun item(text: String, color: Int = Pal.CREAM, action: () -> Unit) {
+        fun item(text: String, color: Int = th().text, action: () -> Unit) {
             box.addView(TextView(this).apply {
-                val label = android.text.SpannableString("> $text")
-                label.setSpan(android.text.style.ForegroundColorSpan(Pal.GOLD), 0, 1, 0)
+                val label = android.text.SpannableString("› " + th().t(text))
+                label.setSpan(android.text.style.ForegroundColorSpan(th().fromColor), 0, 1, 0)
                 this.text = label
-                textSize = 8.5f
-                setTextColor(color)
-                typeface = PixelFonts.title(this@OverlayService)
-                setPadding(dp(6), dp(11), dp(6), dp(11))
+                th().styleBody(this, th().body, color)
+                setPadding(dp(8), dp(10), dp(8), dp(10))
                 isClickable = true
                 background = android.graphics.drawable.StateListDrawable().apply {
-                    addState(intArrayOf(android.R.attr.state_pressed), PixelBox(Pal.PANEL_HI, Pal.PANEL_HI, dpf(2f), shadowSteps = 0, shadow = 0))
+                    addState(intArrayOf(android.R.attr.state_pressed), rounded(alpha(th().text, 30), dpf(10f)))
                 }
                 setOnClickListener { closeMenu(); action() }
             })
         }
-        item(if (autoMode) "DAUER-SCAN AUS" else "DAUER-SCAN AN", Pal.GOLD) { toggleAuto() }
-        item(if (prefs.autoPlay) "AUTO-ZUG AUS" else "AUTO-ZUG AN", Pal.CYAN) { toggleAutoPlay() }
-        item("JETZT SCANNEN") { analyzeNow(auto = false, forceAi = false) }
-        item("MIT AI EINLESEN") { analyzeNow(auto = false, forceAi = true) }
-        item("NEUE PARTIE") {
+        item(if (autoMode) "Dauer-Scan aus" else "Dauer-Scan an", th().toColor) { toggleAuto() }
+        item(if (prefs.autoPlay) "Auto-Zug aus" else "Auto-Zug an", th().fromColor) { toggleAutoPlay() }
+        item("Jetzt scannen") { analyzeNow(auto = false, forceAi = false) }
+        item("Mit AI einlesen") { analyzeNow(auto = false, forceAi = true) }
+        item("Neue Partie") {
             worker.execute { analyzer.resetGame(); stableFeatures = null }
             clearHighlight(); say("Neue Partie – Stellung wird neu erkannt")
         }
-        item("BRETT FESTLEGEN") { startCalibration() }
-        if (prefs.manualRect != null) item("BRETT AUTO-SUCHE") {
+        item("Brett festlegen") { startCalibration() }
+        if (prefs.manualRect != null) item("Brett automatisch suchen") {
             prefs.manualRect = null; worker.execute { analyzer.forgetRect() }; say("Brett wird wieder automatisch gesucht")
         }
-        item("FIGUREN NEU LERNEN") {
+        item("Figuren neu lernen") {
             worker.execute { analyzer.library.clear(); analyzer.resetGame(); PieceStore.clear(this) }
             say("Figuren werden neu gelernt")
         }
-        item("OVERLAY BEENDEN", Pal.CORAL) { stopSelf() }
-        item("SCHLIESSEN", Pal.MUTED) {}
+        item("Overlay beenden", th().danger) { stopSelf() }
+        item("Schließen", th().muted) {}
 
-        val w = dp(250)
+        val w = dp(260)
         val p = overlayParams(w, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH)
         val bp = buttonParams!!
@@ -467,23 +486,23 @@ class OverlayService : Service() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(14), dp(12), dp(18), dp(16))
-            background = PixelBox(Pal.PANEL, Pal.INK, dpf(3f), shadowSteps = 2)
+            background = th().panel(this@OverlayService, overlay = true)
         }
         val hint = TextView(this).apply {
-            text = "Raster aufs Brett ziehen.\nGoldene Ecke = Größe."
-            setTextColor(Pal.CREAM); textSize = 18f; typeface = PixelFonts.body(this@OverlayService)
+            text = "Raster aufs Brett ziehen.\nEcke unten rechts = Größe."
+            th().styleBody(this, th().small)
         }
         bar.addView(hint, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         fun pixelBtn(label: String, fill: Int, onClick: () -> Unit) = TextView(this).apply {
-            text = label; textSize = 9f; setTextColor(Pal.INK); typeface = PixelFonts.title(this@OverlayService)
+            text = th().t(label); th().styleTitle(this, th().label + 2, if (fill == th().accent) th().onAccent else th().text)
             gravity = Gravity.CENTER
-            background = PixelBox(fill, Pal.INK, dpf(2.5f), shadowSteps = 2)
+            background = th().button(this@OverlayService, fill)
             setPadding(dp(12), dp(12), dp(16), dp(16))
             isClickable = true
             setOnClickListener { onClick() }
         }
-        bar.addView(pixelBtn("ZURÜCK", Pal.SLATE) { endCalibration() })
-        bar.addView(pixelBtn("OK", Pal.GOLD) {
+        bar.addView(pixelBtn("Zurück", th().surface) { endCalibration() })
+        bar.addView(pixelBtn("OK", th().accent) {
                 val loc = IntArray(2)
                 cv.getLocationOnScreen(loc)
                 val r = cv.result()
@@ -747,10 +766,8 @@ class OverlayService : Service() {
             var p = bubbleParams
             if (v == null || p == null) {
                 v = TextView(this).apply {
-                    setTextColor(Pal.CREAM)
-                    textSize = 18f
-                    typeface = PixelFonts.body(this@OverlayService)
-                    background = PixelBox(Pal.PANEL, Pal.GOLD, dpf(2.5f), shadowSteps = 2)
+                    th().styleBody(this, th().body)
+                    background = th().panel(this@OverlayService, overlay = true)
                     setPadding(dp(12), dp(8), dp(16), dp(12))
                     maxWidth = (screenW * 0.72).toInt()
                 }
