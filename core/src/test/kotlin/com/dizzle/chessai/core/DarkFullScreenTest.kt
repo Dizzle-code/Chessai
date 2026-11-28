@@ -28,3 +28,18 @@ class DarkFullScreenTest {
         kotlin.test.assertEquals("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR", r.fen!!.substringBefore(' '))
     }
 }
+
+/** Real full-screen screenshot of Duolingo chess (dark board, start position). */
+class DuolingoScreenshotTest {
+    @Test fun duolingoStartPosition() {
+        val bi = ImageIO.read(javaClass.getResourceAsStream("/duolingo_start_full.png"))
+        val px = IntArray(bi.width * bi.height); bi.getRGB(0, 0, bi.width, bi.height, px, 0, bi.width)
+        val img = RgbImage(bi.width, bi.height, px)
+        val a = Analyzer(PieceLibrary()) { _, _, _ -> ByteArray(0) }
+        val r = a.analyze(img, Analyzer.Options(engine = SimpleEngine(16), thinkMs = 200))
+        kotlin.test.assertTrue(r.ok && r.myTurn, r.message)
+        kotlin.test.assertEquals(Analyzer.Source.START, r.source)
+        kotlin.test.assertEquals(true, a.whiteBottom)
+        kotlin.test.assertTrue(kotlin.math.abs(r.rect!!.y - 1005) <= 8, "rect ${r.rect}")
+    }
+}
